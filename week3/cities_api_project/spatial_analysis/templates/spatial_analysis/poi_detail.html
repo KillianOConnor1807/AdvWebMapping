@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ poi.poi_name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <a href="{% url 'spatial_analysis:dashboard' %}" class="btn btn-secondary btn-sm mb-3">&larr; Back to Dashboard</a>
+
+    <h1>{{ poi.poi_name }}</h1>
+    <p class="text-muted">{{ poi.get_poi_type_display }}</p>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <p>{{ poi.description }}</p>
+            <p><strong>Rating:</strong> ⭐ {{ poi.rating }}</p>
+            <p><strong>Visitors per day:</strong> {{ poi.visitors_per_day }}</p>
+            <p><strong>Location:</strong> {{ poi.geom.y }}, {{ poi.geom.x }}</p>
+        </div>
+    </div>
+
+    <h2>Nearby Roads</h2>
+    <ul class="list-group">
+        {% for road in nearby_roads %}
+        <li class="list-group-item">
+            {{ road.road_name }} ({{ road.get_road_type_display }}) — {{ road.speed_limit }} km/h
+        </li>
+        {% empty %}
+        <li class="list-group-item">No nearby roads found.</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}
