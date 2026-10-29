@@ -1,0 +1,165 @@
+<!-- dashboard/templates/dashboard/analytics.html -->
+{% extends 'dashboard/base.html' %}
+
+{% block title %}Analytics - Dublin Muay Thai Gym Finder{% endblock %}
+
+{% block head_extra %}
+<style>
+    .stat-tile .value { font-size: 1.75rem; font-weight: 700; line-height: 1.1; }
+    .bar-track { background: #e9ecef; border-radius: .25rem; height: 1.25rem; }
+    .bar-fill { background: #0d6efd; border-radius: .25rem; height: 100%; min-width: 2px; }
+    .line-swatch { display: inline-block; width: 18px; height: 5px; border-radius: 2px; vertical-align: middle; margin-right: .4rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <h1 class="h2">Gym Analytics</h1>
+    <p class="text-muted">Statistics calculated live from the database with PostGIS spatial queries.</p>
+
+    <!-- Summary -->
+    <section aria-label="Summary" class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-4">
+        <div class="col"><div class="card stat-tile h-100"><div class="card-body">
+            <div class="value">{{ summary.total }}</div><div>gyms</div>
+        </div></div></div>
+        <div class="col"><div class="card stat-tile h-100"><div class="card-body">
+            <div class="value">{% if summary.avg_price %}€{{ summary.avg_price|floatformat:2 }}{% else %}–{% endif %}</div>
+            <div>average per month</div><small class="text-muted">{{ summary.priced }} gyms list a price</small>
+        </div></div></div>
+        <div class="col"><div class="card stat-tile h-100"><div class="card-body">
+            <div class="value">{{ summary.beginner_friendly }} / {{ summary.total }}</div><div>beginner friendly</div>
+        </div></div></div>
+        <div class="col"><div class="card stat-tile h-100"><div class="card-body">
+            <div class="value">{{ summary.near_transit }}</div><div>within 500 m of a Luas or DART line</div>
+        </div></div></div>
+        <div class="col"><div class="card stat-tile h-100"><div class="card-body">
+            <div class="value">{{ summary.districts_with_gyms }} / {{ summary.districts_total }}</div><div>districts with a gym</div>
+        </div></div></div>
+    </section>
+
+    <!-- 1. Districts -->
+    <section class="card shadow-sm mb-4" aria-labelledby="districts-heading">
+        <div class="card-body">
+            <h2 id="districts-heading" class="h4">Gyms by district</h2>
+            <p class="text-muted small">Point-in-polygon: each gym is matched to the district polygon that contains it.</p>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <caption class="visually-hidden">Gyms in each district</caption>
+                    <thead><tr><th scope="col">District</th><th scope="col" class="text-end">Gyms</th><th scope="col" class="text-end">Avg €/month</th><th scope="col">Gyms</th></tr></thead>
+                    <tbody>
+                    {% for row in district_rows %}
+                        <tr>
+                            <th scope="row">{{ row.name }}</th>
+                            <td class="text-end">{{ row.count }}</td>
+                            <td class="text-end">{% if row.avg_price %}{{ row.avg_price|floatformat:2 }}{% else %}<span class="text-muted">not listed</span>{% endif %}</td>
+                            <td class="small">{{ row.names }}</td>
+                        </tr>
+                    {% empty %}
+                        <tr><td colspan="4" class="text-muted">No gyms are inside a district yet.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- 2. Transit -->
+    <section class="card shadow-sm mb-4" aria-labelledby="transit-heading">
+        <div class="card-body">
+            <h2 id="transit-heading" class="h4">Access to public transport</h2>
+            <p class="text-muted small">Buffer query: gyms within each distance of any branch of the line.</p>
+            <div class="row g-4">
+                <div class="col-lg-5">
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <caption class="visually-hidden">Number of gyms within 250 m, 500 m and 1 km of each line</caption>
+                            <thead><tr><th scope="col">Line</th>{% for label in transit_buffer_labels %}<th scope="col" class="text-end">≤ {{ label }}</th>{% endfor %}</tr></thead>
+                            <tbody>
+                            {% for row in transit_rows %}
+                                <tr>
+                                    <th scope="row"><span class="line-swatch" style="background:{{ row.colour }}" aria-hidden="true"></span>{{ row.name }}</th>
+                                    {% for n in row.counts %}<td class="text-end">{{ n }}</td>{% endfor %}
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="col-lg-7">
+                    <h3 class="h6">Nearest stop to each gym</h3>
+                    <p class="text-muted small">Nearest-neighbour query using the spatial index (KNN).</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <caption class="visually-hidden">Closest Luas or DART stop to each gym, nearest first</caption>
+                            <thead><tr><th scope="col">Gym</th><th scope="col">Nearest stop</th><th scope="col" class="text-end">Distance</th></tr></thead>
+                            <tbody>
+                            {% for s in nearest_stops %}
+                                <tr>
+                                    <th scope="row" class="fw-normal">{{ s.gym }}</th>
+                                    <td><span class="line-swatch" style="background:{{ s.colour }}" aria-hidden="true"></span>{{ s.stop }} <span class="text-muted small">({{ s.line }})</span></td>
+                                    <td class="text-end text-nowrap">{{ s.label }}</td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="row g-4 mb-4">
+        <!-- 3. Distance from centre -->
+        <section class="col-lg-6" aria-labelledby="centre-heading">
+            <div class="card shadow-sm h-100"><div class="card-body">
+                <h2 id="centre-heading" class="h4">Distance from the city centre</h2>
+                <p class="text-muted small">Distance from O'Connell Bridge to each gym.</p>
+                <ul class="list-unstyled mb-3">
+                {% for b in bands %}
+                    <li class="mb-2">
+                        <div class="d-flex justify-content-between small"><span>{{ b.label }}</span><strong>{{ b.count }} gym{{ b.count|pluralize }}</strong></div>
+                        <div class="bar-track" title="{{ b.names }}"><div class="bar-fill" style="width: {{ b.percent }}%"></div></div>
+                    </li>
+                {% endfor %}
+                </ul>
+                {% if closest %}
+                <p class="mb-0 small">
+                    Closest: <strong>{{ closest.name }}</strong>, {{ closest.centre_distance.km|floatformat:1 }} km.
+                    Farthest: <strong>{{ farthest.name }}</strong>, {{ farthest.centre_distance.km|floatformat:1 }} km.
+                </p>
+                {% endif %}
+            </div></div>
+        </section>
+
+        <!-- 4. Price and level -->
+        <section class="col-lg-6" aria-labelledby="price-heading">
+            <div class="card shadow-sm h-100"><div class="card-body">
+                <h2 id="price-heading" class="h4">Price and level</h2>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <caption class="visually-hidden">Gyms and average monthly price by level</caption>
+                        <thead><tr><th scope="col">Level</th><th scope="col" class="text-end">Gyms</th><th scope="col" class="text-end">Avg €/month</th></tr></thead>
+                        <tbody>
+                        {% for row in level_rows %}
+                            <tr>
+                                <th scope="row" class="fw-normal">{{ row.label }}</th>
+                                <td class="text-end">{{ row.count }}</td>
+                                <td class="text-end">{% if row.avg_price %}{{ row.avg_price|floatformat:2 }}{% else %}<span class="text-muted">not listed</span>{% endif %}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <ul class="small mb-0">
+                    {% if cheapest is not None %}
+                    <li>Cheapest: <strong>€{{ cheapest|floatformat:0 }}</strong> – {{ cheapest_names }}</li>
+                    <li>Most expensive: <strong>€{{ dearest|floatformat:0 }}</strong> – {{ dearest_names }}</li>
+                    {% endif %}
+                    <li>Monthly price not listed: {{ not_listed }} gym{{ not_listed|pluralize }}</li>
+                </ul>
+            </div></div>
+        </section>
+    </div>
+</div>
+
+{% endblock %}

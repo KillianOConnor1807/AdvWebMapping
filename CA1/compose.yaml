@@ -1,0 +1,76 @@
+# Production setup: `docker compose up -d --build`
+# For development (runserver, live code reload, DEBUG on) add the dev file:
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # No published port: the database is only reachable from inside gymfinder_net
+    networks:
+      gymfinder_net:
+        ipv4_address: 172.28.0.10
+
+  pgadmin:
+    image: dpage/pgadmin4:9
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      gymfinder_net:
+        ipv4_address: 172.28.0.20
+
+  web:
+    build: .
+    # Runs gunicorn (the image's default command) with the code baked into the image
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_NAME: ${POSTGRES_DB}
+      DATABASE_USER: ${POSTGRES_USER}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_HOST: ${DATABASE_HOST}
+      DATABASE_PORT: ${DATABASE_PORT}
+      SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DEBUG: "False"
+      ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
+      USE_HTTPS: ${DJANGO_USE_HTTPS:-False}   # set True only when served over HTTPS
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      gymfinder_net:
+        ipv4_address: 172.28.0.30
+
+volumes:
+  postgis_data:
+  pgadmin_data:
+
+# Isolated bridge network with a fixed subnet; containers reach each other by service name
+networks:
+  gymfinder_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1

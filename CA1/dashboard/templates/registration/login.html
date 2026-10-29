@@ -1,0 +1,39 @@
+<!-- dashboard/templates/registration/login.html (used by django.contrib.auth's LoginView) -->
+{% extends 'dashboard/base.html' %}
+
+{% block title %}Log in - Dublin Muay Thai Gym Finder{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-sm-10 col-md-7 col-lg-5">
+            <div class="card shadow-sm">
+                <div class="card-body p-4">
+                    <h1 class="h3 mb-3">Log in</h1>
+                    <p class="text-muted small">Log in to add, edit or delete gyms on the map.</p>
+
+                    {% if form.errors %}
+                    <div class="alert alert-danger" role="alert">Your username and password didn't match. Please try again.</div>
+                    {% endif %}
+
+                    <form method="post" action="{% url 'login' %}" novalidate>
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label for="id_username" class="form-label">Username</label>
+                            <input type="text" name="username" id="id_username" class="form-control{% if form.errors %} is-invalid{% endif %}"
+                                   value="{{ form.username.value|default:'' }}" autocomplete="username" autocapitalize="none" maxlength="150" required autofocus>
+                        </div>
+                        <div class="mb-3">
+                            <label for="id_password" class="form-label">Password</label>
+                            <input type="password" name="password" id="id_password" class="form-control{% if form.errors %} is-invalid{% endif %}"
+                                   autocomplete="current-password" required>
+                        </div>
+                        <input type="hidden" name="next" value="{{ next|default:'' }}">
+                        <button type="submit" class="btn btn-primary w-100">Log in</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

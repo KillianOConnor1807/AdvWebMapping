@@ -1,0 +1,846 @@
+<!-- dashboard/templates/dashboard/index.html -->
+{% extends 'dashboard/base.html' %}
+
+{% block title %}Find a Gym - Dublin Muay Thai Gym Finder{% endblock %}
+
+{% block head_extra %}
+<style>
+    #map { height: 70vh; min-height: 420px; border-radius: .5rem; }
+    .results-list { max-height: 320px; overflow-y: auto; }
+    #map path.leaflet-interactive:focus { outline: none; }  /* no focus box around clicked shapes */
+
+    /* Map legend (Leaflet control, bottom-left) */
+    .map-legend { background: #fff; border-radius: .375rem; box-shadow: 0 1px 5px rgba(0,0,0,.4); font-size: .8rem; max-width: 220px; }
+    .map-legend-toggle { background: none; border: 0; width: 100%; padding: .35rem .6rem; font-weight: 600; text-align: left; display: flex; justify-content: space-between; gap: .5rem; }
+    .map-legend-toggle:focus-visible { outline: 2px solid #0d6efd; outline-offset: -2px; }
+    .map-legend-toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+    .map-legend ul { list-style: none; margin: 0; padding: 0 .6rem .45rem; }
+    .map-legend li { display: flex; align-items: center; gap: .45rem; margin-top: .25rem; }
+    .map-legend .sw { flex: 0 0 22px; display: inline-flex; justify-content: center; align-items: center; }
+    .sw-line { width: 22px; height: 5px; border-radius: 2px; }
+    .sw-stop { width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #555; }
+    .sw-origin { width: 12px; height: 12px; border-radius: 50%; background: #dc3545; }
+    .sw-radius { width: 18px; height: 18px; border-radius: 50%; border: 1px solid #0d6efd; background: rgba(13,110,253,.08); }
+    .sw-district { width: 18px; height: 13px; border: 1px solid #1a3a6b; background: rgba(78,121,167,.25); }
+
+    /* Pin for the gym being added or edited: the default marker tinted green */
+    .edit-pin { filter: hue-rotate(250deg) saturate(1.6); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+    <div class="row g-3">
+
+        <!-- Controls (below the map on small screens) -->
+        <div class="col-lg-4 order-2 order-lg-1">
+            {% if user.is_authenticated %}
+            <!-- Add / edit form; the location comes from the draggable pin on the map -->
+            <section id="editor-card" class="card shadow-sm mb-3 border-success" aria-labelledby="editor-heading" hidden>
+                <div class="card-body">
+                    <h2 id="editor-heading" class="h5">Add a gym</h2>
+                    <p class="small mb-1" id="editor-location"></p>
+                    <p class="small text-danger mb-2" id="location-error" hidden></p>
+                    <form id="gym-form" novalidate>
+                        {% csrf_token %}
+                        <div id="form-error" class="alert alert-danger py-2 small" role="alert" hidden></div>
+
+                        <div class="mb-2">
+                            <label for="gym-name" class="form-label">Name <span class="text-danger" aria-hidden="true">*</span></label>
+                            <input type="text" id="gym-name" name="name" class="form-control" maxlength="150" required aria-describedby="err-name">
+                            <div class="invalid-feedback" id="err-name"></div>
+                        </div>
+                        <div class="mb-2">
+                            <label for="gym-address" class="form-label">Address</label>
+                            <input type="text" id="gym-address" name="address" class="form-control" maxlength="255" aria-describedby="err-address">
+                            <div class="invalid-feedback" id="err-address"></div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-sm-5">
+                                <label for="gym-eircode" class="form-label">Eircode</label>
+                                <input type="text" id="gym-eircode" name="eircode" class="form-control" maxlength="8" aria-describedby="err-eircode">
+                                <div class="invalid-feedback" id="err-eircode"></div>
+                            </div>
+                            <div class="col-sm-7">
+                                <label for="gym-phone" class="form-label">Phone</label>
+                                <input type="tel" id="gym-phone" name="phone" class="form-control" maxlength="30" aria-describedby="err-phone">
+                                <div class="invalid-feedback" id="err-phone"></div>
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <label for="gym-website" class="form-label">Website</label>
+                            <input type="url" id="gym-website" name="website" class="form-control" placeholder="https://" aria-describedby="err-website">
+                            <div class="invalid-feedback" id="err-website"></div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-sm-6">
+                                <label for="gym-level" class="form-label">Level</label>
+                                <select id="gym-level" name="level" class="form-select" aria-describedby="err-level">
+                                    <option value="beginner">Beginner friendly</option>
+                                    <option value="mixed">All levels</option>
+                                    <option value="competition">Competition focused</option>
+                                </select>
+                                <div class="invalid-feedback" id="err-level"></div>
+                            </div>
+                            <div class="col-sm-6">
+                                <label for="gym-price" class="form-label">Price €/month</label>
+                                <input type="number" id="gym-price" name="price_per_month" class="form-control" min="0" max="1000" step="0.01" aria-describedby="err-price_per_month">
+                                <div class="invalid-feedback" id="err-price_per_month"></div>
+                            </div>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input type="checkbox" id="gym-beginner" name="beginner_friendly" class="form-check-input">
+                            <label for="gym-beginner" class="form-check-label">Welcomes beginners</label>
+                        </div>
+                        <div class="mb-3">
+                            <label for="gym-classes" class="form-label">Classes / pricing notes</label>
+                            <textarea id="gym-classes" name="classes" class="form-control" rows="2" aria-describedby="err-classes"></textarea>
+                            <div class="invalid-feedback" id="err-classes"></div>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="submit" id="save-btn" class="btn btn-success">Save gym</button>
+                            <button type="button" id="cancel-btn" class="btn btn-outline-secondary">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+            {% endif %}
+
+            <!-- Results of whichever search ran last; first card so it sits right under the map on phones -->
+            <section id="results-card" class="card shadow-sm mb-3 border-primary" aria-labelledby="results-heading" hidden>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <h2 id="results-heading" class="h5 mb-0">Results</h2>
+                        <button type="button" id="clear-btn" class="btn btn-sm btn-outline-secondary">Clear</button>
+                    </div>
+                    <p id="status" class="small mt-2 mb-2"></p>
+                    <ol id="results" class="list-group list-group-numbered results-list" aria-labelledby="results-heading"></ol>
+                </div>
+            </section>
+            <!-- Always-present live region so screen readers hear every status change -->
+            <p id="sr-status" class="visually-hidden" role="status" aria-live="polite"></p>
+
+            <section class="card shadow-sm mb-3" aria-labelledby="search-heading">
+                <div class="card-body">
+                    <h2 id="search-heading" class="h5">Search gyms</h2>
+                    <label for="name-search" class="form-label">Gym name</label>
+                    <input type="search" id="name-search" class="form-control" placeholder="e.g. Hammerhead" autocomplete="off" maxlength="30">
+
+                    <label for="district-select" class="form-label mt-2">District</label>
+                    <select id="district-select" class="form-select">
+                        <option value="">All districts</option>
+                    </select>
+                    <p class="mt-2 mb-0 text-muted small" id="gym-count">{{ total_gyms }} gyms</p>
+                </div>
+            </section>
+
+            <section class="card shadow-sm mb-3" aria-labelledby="manage-heading">
+                <div class="card-body">
+                    <h2 id="manage-heading" class="h5">Manage gyms</h2>
+                    {% if user.is_authenticated %}
+                    <p class="text-muted small mb-2">Add a gym by clicking the map, or use Edit / Delete in a gym's popup.</p>
+                    <button type="button" id="add-btn" class="btn btn-success" aria-pressed="false">Add a gym</button>
+                    <p id="add-hint" class="small text-success fw-semibold mt-2 mb-0" hidden>Click the map where the gym is.</p>
+                    {% else %}
+                    <p class="text-muted small mb-0"><a href="{% url 'login' %}?next={{ request.path|urlencode }}">Log in</a> to add, edit or delete gyms.</p>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="card shadow-sm mb-3" aria-labelledby="nearby-heading">
+                <div class="card-body">
+                    <h2 id="nearby-heading" class="h5">Find gyms near me</h2>
+                    <p class="text-muted small">Click anywhere on the map, or use your location.</p>
+
+                    <label for="radius" class="form-label">Search radius: <span id="radius-label">5</span> km</label>
+                    <input type="range" class="form-range" id="radius" min="1" max="30" value="5">
+
+                    <div class="d-grid gap-2 d-sm-flex mt-2">
+                        <button type="button" id="locate-btn" class="btn btn-primary">Use my location</button>
+                        <button type="button" id="reset-btn" class="btn btn-outline-secondary">Reset</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card shadow-sm mb-3" aria-labelledby="transit-heading">
+                <div class="card-body">
+                    <h2 id="transit-heading" class="h5">Gyms near public transport</h2>
+                    <p class="text-muted small">Pick a line, or click a line on the map.</p>
+
+                    <div class="row g-2">
+                        <div class="col-sm-7">
+                            <label for="line-select" class="form-label">Line</label>
+                            <select id="line-select" class="form-select"></select>
+                        </div>
+                        <div class="col-sm-5">
+                            <label for="line-distance" class="form-label">Within</label>
+                            <select id="line-distance" class="form-select">
+                                <option value="250">250 m</option>
+                                <option value="500" selected>500 m</option>
+                                <option value="1000">1 km</option>
+                                <option value="2000">2 km</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="button" id="line-btn" class="btn btn-primary mt-2">Find gyms near line</button>
+                </div>
+            </section>
+        </div>
+
+        <!-- Map (first on small screens) -->
+        <div class="col-lg-8 order-1 order-lg-2">
+            <div id="map" role="application" aria-label="Map of Muay Thai gyms in Dublin"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const DUBLIN = [53.3498, -6.2603];
+    const map = L.map('map').setView(DUBLIN, 11);
+
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        referrerPolicy: 'strict-origin-when-cross-origin',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // District polygons get their own pane below the default overlays so lines and markers stay clickable
+    map.createPane('districts');
+    map.getPane('districts').style.zIndex = 350;
+
+    const gymLayer = L.layerGroup().addTo(map);
+    const transitLayer = L.layerGroup().addTo(map);
+    const stopLayer = L.layerGroup().addTo(map);
+    const districtLayer = L.layerGroup();               // off by default; toggle in the layer control
+    const districtHighlight = L.layerGroup().addTo(map);
+    L.control.layers(null, {
+        'Gyms': gymLayer, 'Transit lines': transitLayer, 'Transit stops': stopLayer, 'Districts': districtLayer
+    }).addTo(map);
+
+    // Legend: open on wider screens, collapsed to a button on phones so it doesn't cover the map
+    const PIN_SVG = '<svg width="12" height="18" viewBox="0 0 12 18" aria-hidden="true"><path d="M6 0C2.7 0 0 2.6 0 5.9 0 10.3 6 18 6 18s6-7.7 6-12.1C12 2.6 9.3 0 6 0z" fill="#2a81cb"/><circle cx="6" cy="6" r="2.3" fill="#fff"/></svg>';
+    const legend = L.control({ position: 'bottomleft' });
+    legend.onAdd = function () {
+        const div = L.DomUtil.create('div', 'map-legend');
+        const open = window.matchMedia('(min-width: 768px)').matches;
+        div.innerHTML =
+            '<button type="button" class="map-legend-toggle" aria-expanded="' + open + '" aria-controls="legend-items">' +
+                '<span>Legend</span><span class="chevron" aria-hidden="true">&#9662;</span></button>' +
+            '<ul id="legend-items"' + (open ? '' : ' hidden') + '>' +
+                '<li><span class="sw">' + PIN_SVG + '</span>Gym</li>' +
+                '<li id="legend-lines-anchor" hidden></li>' +
+                '<li><span class="sw"><span class="sw-stop"></span></span>Transit stop</li>' +
+                '<li><span class="sw"><span class="sw-origin"></span></span>Your chosen location</li>' +
+                '<li><span class="sw"><span class="sw-radius"></span></span>Search radius</li>' +
+                '<li id="legend-district" hidden><span class="sw"><span class="sw-district"></span></span>District</li>' +
+            '</ul>';
+        L.DomEvent.disableClickPropagation(div);        // clicks here must not run "find near me"
+        L.DomEvent.disableScrollPropagation(div);
+        const btn = div.querySelector('button');
+        const items = div.querySelector('ul');
+        btn.addEventListener('click', () => {
+            const expanded = btn.getAttribute('aria-expanded') === 'true';
+            btn.setAttribute('aria-expanded', String(!expanded));
+            items.hidden = expanded;
+        });
+        return div;
+    };
+    legend.addTo(map);
+
+    // One row per transit line, inserted after the "Gym" row once the lines have loaded
+    function addLegendLines(features) {
+        const anchor = document.getElementById('legend-lines-anchor');
+        features.forEach(f => {
+            const li = document.createElement('li');
+            const sw = document.createElement('span');
+            sw.className = 'sw';
+            const line = document.createElement('span');
+            line.className = 'sw-line';
+            line.style.background = f.properties.colour;
+            sw.appendChild(line);
+            li.append(sw, f.properties.name);
+            anchor.before(li);
+        });
+    }
+
+    // The District row only makes sense while the Districts layer is switched on
+    map.on('overlayadd overlayremove', e => {
+        if (e.layer === districtLayer) document.getElementById('legend-district').hidden = e.type === 'overlayremove';
+    });
+
+    const markers = new Map();          // gym id -> Leaflet marker
+    const gymFeatures = new Map();      // gym id -> GeoJSON feature (used to fill the edit form)
+    const distances = new Map();        // gym id -> metres from the chosen point or line
+    const lines = new Map();            // line id -> { feature, layer }
+    const districts = new Map();        // district code -> GeoJSON feature
+    let originMarker = null, radiusCircle = null, origin = null, activeLine = null;
+
+    const nameInput = document.getElementById('name-search');
+    const radiusInput = document.getElementById('radius');
+    const radiusLabel = document.getElementById('radius-label');
+    const statusEl = document.getElementById('status');
+    const resultsEl = document.getElementById('results');
+    const countEl = document.getElementById('gym-count');
+    const lineSelect = document.getElementById('line-select');
+    const lineDistance = document.getElementById('line-distance');
+    const districtSelect = document.getElementById('district-select');
+    const resultsCard = document.getElementById('results-card');
+    const resultsHeading = document.getElementById('results-heading');
+    const srStatus = document.getElementById('sr-status');
+    const smallScreen = window.matchMedia('(max-width: 991.98px)');      // below Bootstrap's lg breakpoint
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    // Editing controls only exist in the page when someone is logged in
+    const gymForm = document.getElementById('gym-form');
+    const CAN_MANAGE = !!gymForm;
+    let addMode = false, editPin = null, editingId = null;
+
+    // Name and district filters apply to every search (list, near me, near line)
+    function filterParams(extra) {
+        const params = new URLSearchParams(extra || {});
+        const q = nameInput.value.trim();
+        if (q) params.set('name', q);
+        if (districtSelect.value) params.set('district', districtSelect.value);
+        return params;
+    }
+
+    function esc(value) {
+        const d = document.createElement('div');
+        d.textContent = value == null ? '' : String(value);
+        return d.innerHTML;
+    }
+
+    function fmtDistance(m) {
+        return m >= 1000 ? (m / 1000).toFixed(1) + ' km' : m + ' m';
+    }
+
+    // The Results card is shown whenever there is a message or a list to show
+    function updateResultsCard() {
+        resultsCard.hidden = !(statusEl.textContent || resultsEl.children.length);
+    }
+
+    function setResultsTitle(title) {
+        resultsHeading.textContent = title;
+    }
+
+    function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'small mt-2 mb-2 ' + (isError ? 'text-danger' : 'text-muted');
+        srStatus.textContent = msg;
+        if (isError && !resultsEl.children.length) setResultsTitle('Something went wrong');
+        updateResultsCard();
+    }
+
+    // On phones the controls are below the results, so bring the results into view after a search
+    function revealResults() {
+        if (smallScreen.matches && !resultsCard.hidden) {
+            resultsCard.scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block: 'start' });
+        }
+    }
+
+    function popupHtml(id, p) {
+        let html = '<strong>' + esc(p.name) + '</strong>';
+        if (distances.has(id)) html += '<br>' + fmtDistance(distances.get(id)) + ' away';
+        if (p.address) html += '<br>' + esc(p.address);
+        if (p.website) html += '<br><a href="' + esc(p.website) + '" target="_blank" rel="noopener noreferrer">Website</a>';
+        if (CAN_MANAGE && p.can_edit) {     // the API decides who may edit (owner or staff)
+            html += '<div class="mt-2 d-flex gap-2">' +
+                '<button type="button" class="btn btn-sm btn-outline-primary" data-gym-action="edit" data-id="' + id + '">Edit</button>' +
+                '<button type="button" class="btn btn-sm btn-outline-danger" data-gym-action="delete" data-id="' + id + '">Delete</button>' +
+                '</div>';
+        }
+        return html;
+    }
+
+    function renderGyms(features) {
+        gymLayer.clearLayers();
+        markers.clear();
+        gymFeatures.clear();
+        features.forEach(f => {
+            const id = f.id ?? f.properties.id;
+            gymFeatures.set(id, f);
+            const [lng, lat] = f.geometry.coordinates;
+            const marker = L.marker([lat, lng], { title: f.properties.name, alt: f.properties.name })
+                .bindPopup(() => popupHtml(id, f.properties));
+            marker.addTo(gymLayer);
+            markers.set(id, marker);
+        });
+        countEl.textContent = features.length + (features.length === 1 ? ' gym' : ' gyms') + ' shown';
+    }
+
+    async function loadGyms() {
+        try {
+            const res = await fetch('/api/gyms/?' + filterParams().toString());
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            renderGyms(data.features);
+
+            // With a district picked and no other search active, list that district's gyms
+            const d = districts.get(districtSelect.value);
+            if (d && !origin && activeLine === null) {
+                setResultsTitle('Gyms in ' + d.properties.name);
+                renderResults(data.features);
+                setStatus(data.features.length
+                    ? data.features.length + ' gym(s) in ' + d.properties.name + '.'
+                    : 'No gyms in ' + d.properties.name + '.');
+            }
+        } catch (err) {
+            setStatus('Could not load gyms. Please try again.', true);
+        }
+    }
+
+    // Fill the results list with gyms (already sorted nearest first by the API)
+    function renderResults(features) {
+        distances.clear();
+        resultsEl.innerHTML = '';
+        features.forEach(f => {
+            const id = f.id ?? f.properties.id;
+            distances.set(id, f.properties.distance_m);
+
+            const li = document.createElement('li');
+            li.className = 'list-group-item d-flex justify-content-between align-items-start';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-link p-0 text-start ms-2 me-auto';   // keep the name beside its number
+            btn.textContent = f.properties.name;
+            btn.addEventListener('click', () => {
+                const m = markers.get(id);
+                if (m) { map.setView(m.getLatLng(), 15); m.openPopup(); }
+            });
+            li.append(btn);
+            if (f.properties.distance_m != null) {     // district listings have no distance
+                const badge = document.createElement('span');
+                badge.className = 'badge text-bg-secondary ms-2';
+                badge.textContent = fmtDistance(f.properties.distance_m);
+                li.append(badge);
+            }
+            resultsEl.appendChild(li);
+        });
+        updateResultsCard();
+    }
+
+    function highlightLine(id) {
+        lines.forEach(({ feature, layer }, lineId) => {
+            layer.setStyle({ weight: lineId === id ? 8 : 5, opacity: id === null || lineId === id ? 0.9 : 0.4 });
+        });
+        activeLine = id;
+    }
+
+    function clearOrigin() {
+        if (originMarker) map.removeLayer(originMarker);
+        if (radiusCircle) map.removeLayer(radiusCircle);
+        originMarker = radiusCircle = origin = null;
+        highlightLine(null);
+        distances.clear();
+        resultsEl.innerHTML = '';
+        updateResultsCard();
+    }
+
+    async function loadTransit() {
+        try {
+            const [linesRes, stopsRes] = await Promise.all([
+                fetch('/api/transit/lines/'), fetch('/api/transit/stops/')
+            ]);
+            if (!linesRes.ok || !stopsRes.ok) throw new Error('HTTP error');
+            const [lineData, stopData] = await Promise.all([linesRes.json(), stopsRes.json()]);
+
+            lineData.features.forEach(f => {
+                const id = f.id ?? f.properties.id;
+                const layer = L.geoJSON(f, { style: { color: f.properties.colour, weight: 5, opacity: 0.9 } })
+                    .bindTooltip(esc(f.properties.name), { sticky: true })
+                    .on('click', e => {
+                        L.DomEvent.stopPropagation(e);   // don't also run the map's "find near me" click
+                        if (handleEditingClick(e.latlng)) return;
+                        lineSelect.value = id;
+                        findNearLine(id);
+                    })
+                    .addTo(transitLayer);
+                lines.set(id, { feature: f, layer });
+
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = f.properties.name;
+                lineSelect.appendChild(opt);
+            });
+
+            addLegendLines(lineData.features);
+
+            const colours = new Map(lineData.features.map(f => [f.id ?? f.properties.id, f.properties.colour]));
+            stopData.features.forEach(f => {
+                const [lng, lat] = f.geometry.coordinates;
+                L.circleMarker([lat, lng], {
+                    radius: 4, color: colours.get(f.properties.line) || '#333', weight: 2,
+                    fillColor: '#fff', fillOpacity: 1
+                })
+                    .bindTooltip(esc(f.properties.name) + ' (' + esc(f.properties.line_name) + ')')
+                    .addTo(stopLayer);
+            });
+        } catch (err) {
+            setStatus('Could not load transit lines.', true);
+        }
+    }
+
+    // Safe to call again after a gym changes: rebuilds the dropdown (and its gym counts) and polygons
+    async function loadDistricts() {
+        try {
+            const res = await fetch('/api/districts/');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+
+            const selected = districtSelect.value;
+            districts.clear();
+            districtLayer.clearLayers();
+            districtSelect.length = 1;                       // keep only "All districts"
+
+            data.features.forEach(f => {
+                const p = f.properties;
+                districts.set(p.code, f);
+
+                const opt = document.createElement('option');
+                opt.value = p.code;
+                opt.textContent = p.name + ' (' + p.gym_count + ')';
+                districtSelect.appendChild(opt);
+
+                L.geoJSON(f, {
+                    pane: 'districts',
+                    style: { color: '#1a3a6b', weight: 1, fillColor: '#4e79a7', fillOpacity: p.gym_count ? 0.18 : 0.05 }
+                })
+                    .bindTooltip(esc(p.name) + ': ' + p.gym_count + (p.gym_count === 1 ? ' gym' : ' gyms'), { sticky: true })
+                    .on('click', e => {
+                        L.DomEvent.stopPropagation(e);   // select the district instead of "find near me"
+                        if (handleEditingClick(e.latlng)) return;
+                        selectDistrict(p.code);
+                    })
+                    .addTo(districtLayer);
+            });
+            districtSelect.value = selected;
+        } catch (err) {
+            setStatus('Could not load districts.', true);
+        }
+    }
+
+    function selectDistrict(code) {
+        districtSelect.value = code;
+        clearOrigin();
+        setStatus('');
+        districtHighlight.clearLayers();
+        const f = districts.get(code);
+        if (f) {
+            const outline = L.geoJSON(f, {
+                pane: 'districts', interactive: false,
+                style: { color: '#0d6efd', weight: 3, fillOpacity: 0.08 }
+            }).addTo(districtHighlight);
+            map.fitBounds(outline.getBounds());
+        }
+        return loadGyms();
+    }
+
+    async function findNearLine(id) {
+        const entry = lines.get(Number(id));
+        if (!entry) return;
+        clearOrigin();
+        highlightLine(Number(id));
+        map.fitBounds(entry.layer.getBounds());
+
+        const metres = lineDistance.value;
+        const params = filterParams({ line: id, distance: metres });
+        setResultsTitle('Gyms within ' + fmtDistance(Number(metres)) + ' of the ' + entry.feature.properties.name);
+
+        try {
+            const res = await fetch('/api/gyms/near_line/?' + params.toString());
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Request failed');
+            renderResults(data.features);
+            const name = entry.feature.properties.name;
+            setStatus(data.features.length
+                ? data.features.length + ' gym(s) within ' + fmtDistance(Number(metres)) + ' of the ' + name + ', nearest first.'
+                : 'No gyms within ' + fmtDistance(Number(metres)) + ' of the ' + name + '. Try a larger distance.');
+        } catch (err) {
+            setStatus(err.message, true);
+        }
+    }
+
+    async function findNearby(lat, lng) {
+        highlightLine(null);
+        origin = { lat, lng };
+        const km = radiusInput.value;
+
+        if (originMarker) map.removeLayer(originMarker);
+        if (radiusCircle) map.removeLayer(radiusCircle);
+        originMarker = L.circleMarker([lat, lng], { radius: 8, color: '#dc3545', fillOpacity: 0.9 })
+            .addTo(map).bindTooltip('Your chosen location');
+        radiusCircle = L.circle([lat, lng], { radius: km * 1000, color: '#0d6efd', weight: 1, fillOpacity: 0.05 }).addTo(map);
+        map.fitBounds(radiusCircle.getBounds());
+
+        const params = filterParams({ lat, lng, distance: km, limit: 10 });
+        setResultsTitle('Gyms near your chosen location (' + km + ' km)');
+
+        try {
+            const res = await fetch('/api/gyms/nearby/?' + params.toString());
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Request failed');
+            renderResults(data.features);
+
+            setStatus(data.features.length
+                ? data.features.length + ' gym(s) within ' + km + ' km, nearest first.'
+                : 'No gyms within ' + km + ' km. Try a larger radius.');
+        } catch (err) {
+            setStatus(err.message, true);
+        }
+    }
+
+    // ----- Adding, editing and deleting gyms (only wired up when logged in) -----
+    const editIcon = new L.Icon.Default({ className: 'edit-pin' });
+
+    // While a gym is being placed or edited, a map click positions its pin instead of searching
+    function handleEditingClick(latlng) {
+        if (editPin) { editPin.setLatLng(latlng); updateLocationText(); return true; }
+        if (addMode) { setAddMode(false); openEditor(null, latlng, {}); return true; }
+        return false;
+    }
+
+    function setAddMode(on) {
+        addMode = on;
+        const btn = document.getElementById('add-btn');
+        btn.textContent = on ? 'Cancel adding' : 'Add a gym';
+        btn.setAttribute('aria-pressed', String(on));
+        document.getElementById('add-hint').hidden = !on;
+        map.getContainer().style.cursor = on ? 'crosshair' : '';
+        if (on) srStatus.textContent = 'Click the map where the gym is.';
+    }
+
+    function updateLocationText() {
+        const ll = editPin.getLatLng();
+        document.getElementById('editor-location').textContent =
+            'Location: ' + ll.lat.toFixed(5) + ', ' + ll.lng.toFixed(5) + ' (drag the green pin or click the map to move it)';
+    }
+
+    function clearFormErrors() {
+        gymForm.querySelectorAll('.is-invalid').forEach(el => el.classList.remove('is-invalid'));
+        gymForm.querySelectorAll('.invalid-feedback').forEach(el => { el.textContent = ''; });
+        document.getElementById('form-error').hidden = true;
+        document.getElementById('location-error').hidden = true;
+    }
+
+    function showFormError(msg) {
+        const box = document.getElementById('form-error');
+        box.textContent = msg;
+        box.hidden = false;
+    }
+
+    // DRF returns {"field": ["message", ...]}; put each message under its field
+    function showApiErrors(errors) {
+        let first = null;
+        Object.entries(errors).forEach(([field, msgs]) => {
+            const text = [].concat(msgs).join(' ');
+            const input = gymForm.elements[field];
+            if (field === 'location') {
+                const el = document.getElementById('location-error');
+                el.textContent = text;
+                el.hidden = false;
+            } else if (input && input.type !== 'checkbox') {
+                input.classList.add('is-invalid');
+                document.getElementById('err-' + field).textContent = text;
+                first = first || input;
+            } else {
+                showFormError(text);
+            }
+        });
+        if (first) first.focus();
+    }
+
+    function openEditor(id, latlng, props) {
+        editingId = id;
+        gymForm.reset();
+        clearFormErrors();
+        document.getElementById('editor-heading').textContent = id ? 'Edit ' + props.name : 'Add a gym';
+        ['name', 'address', 'eircode', 'phone', 'website', 'classes'].forEach(f => { gymForm.elements[f].value = props[f] || ''; });
+        gymForm.elements.level.value = props.level || 'mixed';
+        gymForm.elements.price_per_month.value = props.price_per_month ?? '';
+        gymForm.elements.beginner_friendly.checked = props.beginner_friendly ?? true;
+
+        editPin = L.marker(latlng, { draggable: true, autoPan: true, icon: editIcon, keyboard: false })
+            .bindTooltip(id ? 'Drag to move' : 'New gym: drag to adjust', { permanent: true, direction: 'top', offset: [0, -40] })
+            .on('drag', updateLocationText)
+            .addTo(map);
+        updateLocationText();
+
+        const card = document.getElementById('editor-card');
+        card.hidden = false;
+        if (smallScreen.matches) card.scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block: 'start' });
+        gymForm.elements.name.focus({ preventScroll: true });
+    }
+
+    function closeEditor() {
+        if (editPin) map.removeLayer(editPin);
+        editPin = null;
+        const wasEditing = editingId !== null;
+        editingId = null;
+        document.getElementById('editor-card').hidden = true;
+        if (wasEditing) loadGyms();      // brings back the marker that was hidden while editing
+    }
+
+    function startEdit(id) {
+        const f = gymFeatures.get(id);
+        if (!f) return;
+        setAddMode(false);
+        if (editPin) closeEditor();
+        const marker = markers.get(id);
+        if (marker) gymLayer.removeLayer(marker);    // the draggable green pin stands in for it
+        const [lng, lat] = f.geometry.coordinates;
+        openEditor(id, L.latLng(lat, lng), f.properties);
+    }
+
+    function csrfToken() {
+        return gymForm.elements.csrfmiddlewaretoken.value;
+    }
+
+    // After any change, reload everything that depends on gyms and say what happened
+    async function afterChange(title, message, focusId) {
+        clearOrigin();
+        await Promise.all([loadGyms(), loadDistricts()]);
+        setResultsTitle(title);
+        setStatus(message);
+        const marker = focusId != null ? markers.get(focusId) : null;
+        if (marker) { map.setView(marker.getLatLng(), Math.max(map.getZoom(), 14)); marker.openPopup(); }
+        revealResults();
+    }
+
+    async function saveGym(event) {
+        event.preventDefault();
+        clearFormErrors();
+        const el = gymForm.elements;
+        if (!el.name.value.trim()) {
+            el.name.classList.add('is-invalid');
+            document.getElementById('err-name').textContent = 'Enter the gym\'s name.';
+            el.name.focus();
+            return;
+        }
+        const ll = editPin.getLatLng();
+        const body = {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [+ll.lng.toFixed(6), +ll.lat.toFixed(6)] },
+            properties: {
+                name: el.name.value.trim(), address: el.address.value.trim(), eircode: el.eircode.value.trim(),
+                phone: el.phone.value.trim(), website: el.website.value.trim(), level: el.level.value,
+                beginner_friendly: el.beginner_friendly.checked, classes: el.classes.value.trim(),
+                price_per_month: el.price_per_month.value === '' ? null : el.price_per_month.value,
+            },
+        };
+        const isNew = editingId === null;
+        const saveBtn = document.getElementById('save-btn');
+        saveBtn.disabled = true;
+        try {
+            const res = await fetch(isNew ? '/api/gyms/' : '/api/gyms/' + editingId + '/', {
+                method: isNew ? 'POST' : 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+                credentials: 'same-origin',
+                body: JSON.stringify(body),
+            });
+            if (res.status === 400) { showApiErrors(await res.json()); return; }
+            if (res.status === 403) throw new Error('You are not allowed to change this gym. Try logging in again.');
+            if (!res.ok) throw new Error('Could not save the gym (HTTP ' + res.status + '). Please try again.');
+            const saved = await res.json();
+            const id = saved.id ?? saved.properties.id;
+            const p = saved.properties;
+            closeEditor();
+            await afterChange(isNew ? 'Gym added' : 'Gym updated',
+                (isNew ? 'Added "' : 'Saved "') + p.name + '"' + (p.district ? ' in ' + p.district + '.' : '.'), id);
+        } catch (err) {
+            showFormError(err.message);
+        } finally {
+            saveBtn.disabled = false;
+        }
+    }
+
+    async function deleteGym(id) {
+        const f = gymFeatures.get(id);
+        if (!f || !window.confirm('Delete "' + f.properties.name + '"? This can\'t be undone.')) return;
+        try {
+            const res = await fetch('/api/gyms/' + id + '/', {
+                method: 'DELETE', headers: { 'X-CSRFToken': csrfToken() }, credentials: 'same-origin',
+            });
+            if (res.status === 403) throw new Error('You are not allowed to delete this gym.');
+            if (res.status !== 204) throw new Error('Could not delete the gym (HTTP ' + res.status + ').');
+            await afterChange('Gym deleted', 'Deleted "' + f.properties.name + '".');
+        } catch (err) {
+            setResultsTitle('Something went wrong');
+            setStatus(err.message, true);
+        }
+    }
+
+    if (CAN_MANAGE) {
+        document.getElementById('add-btn').addEventListener('click', () => {
+            if (editPin) closeEditor();
+            setAddMode(!addMode);
+        });
+        document.getElementById('cancel-btn').addEventListener('click', closeEditor);
+        gymForm.addEventListener('submit', saveGym);
+
+        // Edit / Delete buttons live inside popups, which Leaflet creates on demand
+        map.on('popupopen', e => {
+            e.popup.getElement().querySelectorAll('[data-gym-action]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const id = Number(btn.dataset.id);
+                    map.closePopup();
+                    if (btn.dataset.gymAction === 'edit') startEdit(id);
+                    else deleteGym(id);
+                });
+            });
+        });
+    }
+
+    // Events
+    map.on('click', e => {
+        if (handleEditingClick(e.latlng)) return;
+        findNearby(e.latlng.lat, e.latlng.lng);
+    });
+
+    radiusInput.addEventListener('input', () => { radiusLabel.textContent = radiusInput.value; });
+    radiusInput.addEventListener('change', () => { if (origin) findNearby(origin.lat, origin.lng); });
+
+    let timer;
+    nameInput.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            loadGyms();
+            if (origin) findNearby(origin.lat, origin.lng);
+            else if (activeLine !== null) findNearLine(activeLine);
+        }, 300);
+    });
+
+    // Searches started from the side controls scroll the results into view on phones;
+    // searches started by clicking the map don't, so the map stays on screen
+    districtSelect.addEventListener('change', () => selectDistrict(districtSelect.value).then(revealResults));
+
+    document.getElementById('line-btn').addEventListener('click', () => findNearLine(lineSelect.value).then(revealResults));
+    lineDistance.addEventListener('change', () => { if (activeLine !== null) findNearLine(activeLine).then(revealResults); });
+
+    document.getElementById('locate-btn').addEventListener('click', () => {
+        if (!navigator.geolocation) { setStatus('Geolocation is not supported by this browser.', true); return; }
+        setResultsTitle('Gyms near your location');
+        setStatus('Finding your location...');
+        revealResults();
+        navigator.geolocation.getCurrentPosition(
+            pos => findNearby(pos.coords.latitude, pos.coords.longitude).then(revealResults),
+            () => setStatus('Could not get your location. Click the map instead.', true),
+            { timeout: 10000 }
+        );
+    });
+
+    function resetAll() {
+        selectDistrict('');
+        map.setView(DUBLIN, 11);
+    }
+    document.getElementById('reset-btn').addEventListener('click', resetAll);
+    document.getElementById('clear-btn').addEventListener('click', resetAll);
+
+    loadGyms();
+    loadTransit();
+    loadDistricts();
+})();
+</script>
+{% endblock %}
