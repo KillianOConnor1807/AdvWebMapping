@@ -12,15 +12,15 @@
     /* Map legend (Leaflet control, bottom-left) */
     .map-legend { background: #fff; border-radius: .375rem; box-shadow: 0 1px 5px rgba(0,0,0,.4); font-size: .8rem; max-width: 220px; }
     .map-legend-toggle { background: none; border: 0; width: 100%; padding: .35rem .6rem; font-weight: 600; text-align: left; display: flex; justify-content: space-between; gap: .5rem; }
-    .map-legend-toggle:focus-visible { outline: 2px solid #0d6efd; outline-offset: -2px; }
+    .map-legend-toggle:focus-visible { outline: 2px solid #F59E0B; outline-offset: -2px; }
     .map-legend-toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
     .map-legend ul { list-style: none; margin: 0; padding: 0 .6rem .45rem; }
     .map-legend li { display: flex; align-items: center; gap: .45rem; margin-top: .25rem; }
     .map-legend .sw { flex: 0 0 22px; display: inline-flex; justify-content: center; align-items: center; }
     .sw-line { width: 22px; height: 5px; border-radius: 2px; }
-    .sw-stop { width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #555; }
+    .sw-stop { width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #94A3B8; }
     .sw-origin { width: 12px; height: 12px; border-radius: 50%; background: #dc3545; }
-    .sw-radius { width: 18px; height: 18px; border-radius: 50%; border: 1px solid #0d6efd; background: rgba(13,110,253,.08); }
+    .sw-radius { width: 18px; height: 18px; border-radius: 50%; border: 1px solid #F59E0B; background: rgba(245,158,11,.15); }
     .sw-district { width: 18px; height: 13px; border: 1px solid #1a3a6b; background: rgba(78,121,167,.25); }
 
     /* Pin for the gym being added or edited: the default marker tinted green */
@@ -371,11 +371,30 @@
         countEl.textContent = features.length + (features.length === 1 ? ' gym' : ' gyms') + ' shown';
     }
 
+    // Parse an API response safely. On failure, throw an Error carrying the API's own message
+    // ({"error": ...}) or a generic one, so no raw "HTTP 500" or JSON parse error reaches the user.
+    async function readJson(res) {
+        let body = null;
+        try { body = await res.json(); } catch (e) { /* not JSON (e.g. a proxy error page) */ }
+        if (res.ok) {
+            if (body === null) throw new Error('The server sent an unreadable response.');
+            return body;
+        }
+        let msg;
+        if (body && body.error) msg = body.error;
+        else if (res.status === 429) msg = 'Too many requests. Please wait a moment and try again.';
+        else if (res.status >= 500) msg = 'The server had a problem. Please try again shortly.';
+        else msg = 'The request failed (HTTP ' + res.status + ').';
+        const err = new Error(msg);
+        err.status = res.status;
+        err.details = body && body.details;
+        throw err;
+    }
+
     async function loadGyms() {
         try {
             const res = await fetch('/api/gyms/?' + filterParams().toString());
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const data = await res.json();
+            const data = await readJson(res);
             renderGyms(data.features);
 
             // With a district picked and no other search active, list that district's gyms
@@ -444,8 +463,7 @@
             const [linesRes, stopsRes] = await Promise.all([
                 fetch('/api/transit/lines/'), fetch('/api/transit/stops/')
             ]);
-            if (!linesRes.ok || !stopsRes.ok) throw new Error('HTTP error');
-            const [lineData, stopData] = await Promise.all([linesRes.json(), stopsRes.json()]);
+            const [lineData, stopData] = await Promise.all([readJson(linesRes), readJson(stopsRes)]);
 
             lineData.features.forEach(f => {
                 const id = f.id ?? f.properties.id;
@@ -487,8 +505,7 @@
     async function loadDistricts() {
         try {
             const res = await fetch('/api/districts/');
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const data = await res.json();
+            const data = await readJson(res);
 
             const selected = districtSelect.value;
             districts.clear();
@@ -531,7 +548,7 @@
         if (f) {
             const outline = L.geoJSON(f, {
                 pane: 'districts', interactive: false,
-                style: { color: '#0d6efd', weight: 3, fillOpacity: 0.08 }
+                style: { color: '#F59E0B', weight: 3, fillOpacity: 0.12 }
             }).addTo(districtHighlight);
             map.fitBounds(outline.getBounds());
         }
@@ -551,8 +568,7 @@
 
         try {
             const res = await fetch('/api/gyms/near_line/?' + params.toString());
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Request failed');
+            const data = await readJson(res);
             renderResults(data.features);
             const name = entry.feature.properties.name;
             setStatus(data.features.length
@@ -572,7 +588,7 @@
         if (radiusCircle) map.removeLayer(radiusCircle);
         originMarker = L.circleMarker([lat, lng], { radius: 8, color: '#dc3545', fillOpacity: 0.9 })
             .addTo(map).bindTooltip('Your chosen location');
-        radiusCircle = L.circle([lat, lng], { radius: km * 1000, color: '#0d6efd', weight: 1, fillOpacity: 0.05 }).addTo(map);
+        radiusCircle = L.circle([lat, lng], { radius: km * 1000, color: '#F59E0B', weight: 2, fillOpacity: 0.08 }).addTo(map);
         map.fitBounds(radiusCircle.getBounds());
 
         const params = filterParams({ lat, lng, distance: km, limit: 10 });
@@ -580,8 +596,7 @@
 
         try {
             const res = await fetch('/api/gyms/nearby/?' + params.toString());
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Request failed');
+            const data = await readJson(res);
             renderResults(data.features);
 
             setStatus(data.features.length
@@ -634,6 +649,7 @@
     // DRF returns {"field": ["message", ...]}; put each message under its field
     function showApiErrors(errors) {
         let first = null;
+        if (typeof errors.error === 'string' && !errors.details) { showFormError(errors.error); return; }
         Object.entries(errors).forEach(([field, msgs]) => {
             const text = [].concat(msgs).join(' ');
             const input = gymForm.elements[field];
@@ -740,10 +756,13 @@
                 credentials: 'same-origin',
                 body: JSON.stringify(body),
             });
-            if (res.status === 400) { showApiErrors(await res.json()); return; }
+            if (res.status === 400) {
+                const body = await res.json().catch(() => ({}));
+                showApiErrors(body.details || body);
+                return;
+            }
             if (res.status === 403) throw new Error('You are not allowed to change this gym. Try logging in again.');
-            if (!res.ok) throw new Error('Could not save the gym (HTTP ' + res.status + '). Please try again.');
-            const saved = await res.json();
+            const saved = await readJson(res);
             const id = saved.id ?? saved.properties.id;
             const p = saved.properties;
             closeEditor();

@@ -1,4 +1,5 @@
 # api/serializers.py
+from django.contrib.gis.measure import D
 from rest_framework import serializers
 from rest_framework_gis.serializers import GeoFeatureModelSerializer
 
@@ -22,7 +23,8 @@ class GymSerializer(GeoFeatureModelSerializer):
             "level", "beginner_friendly", "price_per_month", "classes",
             "data_source", "owner", "distance_m", "can_edit",
         ]
-        read_only_fields = ["owner", "district"]  # district is derived from location
+        read_only_fields = ["owner", "district", "data_source"]  # district is derived from location
+        extra_kwargs = {"classes": {"max_length": 2000}}
 
     def get_distance_m(self, obj):
         dist = getattr(obj, "distance", None)
@@ -35,6 +37,8 @@ class GymSerializer(GeoFeatureModelSerializer):
         return bool(user and user.is_authenticated and (user.is_staff or obj.owner_id == user.id))
 
     def validate_location(self, value):
+        if value.geom_type != "Point":
+            raise serializers.ValidationError("Location must be a single point.")
         b = DUBLIN_BOUNDS
         if not (b["west"] <= value.x <= b["east"] and b["south"] <= value.y <= b["north"]):
             raise serializers.ValidationError("Location must be within the Dublin area.")
@@ -44,6 +48,20 @@ class GymSerializer(GeoFeatureModelSerializer):
         if value is not None and value > 1000:
             raise serializers.ValidationError("Price looks unrealistic (max 1000).")
         return value
+
+    def validate(self, attrs):
+        # Reject duplicates: same name (any case) within 100 m of the new location
+        name = attrs.get("name", getattr(self.instance, "name", None))
+        location = attrs.get("location", getattr(self.instance, "location", None))
+        if name and location is not None:
+            clash = Gym.objects.filter(name__iexact=name.strip(),
+                                       location__distance_lte=(location, D(m=100)))
+            if self.instance is not None:
+                clash = clash.exclude(pk=self.instance.pk)
+            if clash.exists():
+                raise serializers.ValidationError(
+                    {"name": ["A gym with this name already exists at this location."]})
+        return attrs
 
 
 class TransitLineSerializer(GeoFeatureModelSerializer):

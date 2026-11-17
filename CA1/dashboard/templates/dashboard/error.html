@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ status }} - {{ title }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f8f9fa; }
+        .error-box { max-width: 32rem; margin: 15vh auto 0; text-align: center; }
+        .error-code { font-size: 5rem; font-weight: 700; color: #6c757d; line-height: 1; }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <div class="error-box">
+            <div class="error-code">{{ status }}</div>
+            <h1 class="h3 mt-3">{{ title }}</h1>
+            <p class="text-muted">{{ message }}</p>
+            <a href="/" class="btn btn-primary">Back to the map</a>
+        </div>
+    </main>
+</body>
+</html>

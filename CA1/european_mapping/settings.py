@@ -156,6 +156,8 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 100,
+    # One JSON error shape for every API error (see api/exceptions.py)
+    'EXCEPTION_HANDLER': 'api.exceptions.api_exception_handler',
     # Rate limiting: too many requests get 429 Too Many Requests
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',

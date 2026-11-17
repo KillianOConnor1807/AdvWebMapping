@@ -1,0 +1,11 @@
+# Keep secrets and local clutter out of the Docker image
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+**/__pycache__
+**/*.pyc
+staticfiles/
+*.log
+compose*.yaml
