@@ -12,10 +12,12 @@ from rest_framework.response import Response
 
 from districts.models import District
 from gyms.models import Gym
-from transit.models import TransitLine, TransitStop
+from transit.models import BusRoute, BusStop, TransitLine, TransitStop
+from .connections import build_connection
 from .filters import GymFilter
 from .serializers import (
-    DistrictSerializer, GymSerializer, TransitLineSerializer, TransitStopSerializer,
+    BusRouteListSerializer, BusRouteSerializer, BusStopSerializer, DistrictSerializer,
+    GymSerializer, TransitLineSerializer, TransitStopSerializer,
 )
 
 MAX_RADIUS_KM = 50
@@ -23,6 +25,8 @@ MAX_LINE_BUFFER_M = 5000
 MAX_RESULTS = 100
 MAX_BOX_DEGREES = 5          # largest bounding box accepted by within_bounds
 MAX_ID = 2**63 - 1           # largest value a BigAutoField id can hold
+MAX_STOP_RESULTS = 500       # most bus stops returned for one map view
+MAX_STOP_RADIUS_M = 2000     # widest 'nearest stops' search
 
 
 def read_number(source, name, errors, *, default=None, minimum=None, maximum=None,
@@ -64,6 +68,25 @@ def read_number(source, name, errors, *, default=None, minimum=None, maximum=Non
 def raise_if_invalid(errors):
     if errors:
         raise exceptions.ValidationError(errors)
+
+
+def parse_bounds(source):
+    """Turn {west, south, east, north} into a validated Polygon box (raises a 400 if it is unusable)."""
+    errors = {}
+    west = read_number(source, "west", errors, minimum=-180, maximum=180)
+    east = read_number(source, "east", errors, minimum=-180, maximum=180)
+    south = read_number(source, "south", errors, minimum=-90, maximum=90)
+    north = read_number(source, "north", errors, minimum=-90, maximum=90)
+    raise_if_invalid(errors)
+    if west >= east or south >= north:
+        raise exceptions.ValidationError(
+            {"non_field_errors": ["west must be less than east, and south less than north."]})
+    if east - west > MAX_BOX_DEGREES or north - south > MAX_BOX_DEGREES:
+        raise exceptions.ValidationError(
+            {"non_field_errors": [f"The box is too large (at most {MAX_BOX_DEGREES} degrees across)."]})
+    box = Polygon.from_bbox((west, south, east, north))
+    box.srid = 4326
+    return box
 
 
 def districts_with_gym_count():
@@ -125,21 +148,7 @@ class GymViewSet(viewsets.ModelViewSet):
         if not isinstance(data, Mapping):
             raise exceptions.ValidationError(
                 {"non_field_errors": ["Send a JSON object with west, south, east and north."]})
-        errors = {}
-        west = read_number(data, "west", errors, minimum=-180, maximum=180)
-        east = read_number(data, "east", errors, minimum=-180, maximum=180)
-        south = read_number(data, "south", errors, minimum=-90, maximum=90)
-        north = read_number(data, "north", errors, minimum=-90, maximum=90)
-        raise_if_invalid(errors)
-        if west >= east or south >= north:
-            raise exceptions.ValidationError(
-                {"non_field_errors": ["west must be less than east, and south less than north."]})
-        if east - west > MAX_BOX_DEGREES or north - south > MAX_BOX_DEGREES:
-            raise exceptions.ValidationError(
-                {"non_field_errors": [f"The box is too large (at most {MAX_BOX_DEGREES} degrees across)."]})
-
-        bbox = Polygon.from_bbox((west, south, east, north))
-        bbox.srid = 4326
+        bbox = parse_bounds(data)
         qs = self.filter_queryset(self.get_queryset()).filter(location__within=bbox)
         return Response(self.get_serializer(qs, many=True).data)
 
@@ -166,6 +175,20 @@ class GymViewSet(viewsets.ModelViewSet):
             .order_by("distance")
         )
         return Response(self.get_serializer(qs, many=True).data)
+
+    @action(detail=True, methods=["get"])
+    def connection(self, request, pk=None):
+        """GET /api/gyms/{id}/connection/?lat=53.34&lng=-6.26&max_walk=800
+
+        Public-transport options from the user's position to this gym: nearest stops at each end
+        and the routes (bus, Luas, DART) that connect them. See api/connections.py.
+        """
+        errors, params = {}, request.query_params
+        lat = read_number(params, "lat", errors, minimum=-90, maximum=90)
+        lng = read_number(params, "lng", errors, minimum=-180, maximum=180)
+        max_walk = read_number(params, "max_walk", errors, default=800, positive=True, maximum=MAX_STOP_RADIUS_M)
+        raise_if_invalid(errors)
+        return Response(build_connection(Point(lng, lat, srid=4326), self.get_object(), max_walk))
 
     @action(detail=True, methods=["get"])
     def district(self, request, pk=None):
@@ -209,3 +232,65 @@ class DistrictViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return districts_with_gym_count()
+
+
+class BusRouteViewSet(viewsets.ReadOnlyModelViewSet):
+    """Dublin Bus routes. The list is light (no geometry); a single route comes back as GeoJSON."""
+    queryset = BusRoute.objects.annotate(stop_count=Count("stops"))
+    filterset_fields = ["short_name"]
+    search_fields = ["short_name", "long_name"]
+    pagination_class = None
+
+    def get_serializer_class(self):
+        return BusRouteListSerializer if self.action == "list" else BusRouteSerializer
+
+    @action(detail=True, methods=["get"])
+    def stops(self, request, pk=None):
+        """GET /api/transit/bus-routes/{id}/stops/ -> the stops this route serves"""
+        stops = self.get_object().stops.prefetch_related("routes")
+        return Response(BusStopSerializer(stops, many=True, context=self.get_serializer_context()).data)
+
+
+class BusStopViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = BusStop.objects.prefetch_related("routes")
+    serializer_class = BusStopSerializer
+    search_fields = ["name", "code"]
+    pagination_class = None
+
+    def list(self, request, *args, **kwargs):
+        """GET /api/transit/bus-stops/?bbox=west,south,east,north
+
+        A box is required: the map asks only for the stops it can see, instead of all ~4,300.
+        """
+        raw = request.query_params.get("bbox")
+        if not raw:
+            raise exceptions.ValidationError({"bbox": ["This parameter is required: west,south,east,north."]})
+        parts = raw.split(",")
+        if len(parts) != 4:
+            raise exceptions.ValidationError({"bbox": ["Use four numbers: west,south,east,north."]})
+        box = parse_bounds(dict(zip(("west", "south", "east", "north"), parts)))
+
+        stops = list(self.filter_queryset(self.get_queryset()).filter(location__within=box)[:MAX_STOP_RESULTS + 1])
+        response = Response(self.get_serializer(stops[:MAX_STOP_RESULTS], many=True).data)
+        if len(stops) > MAX_STOP_RESULTS:
+            response["X-Truncated"] = "true"   # the client should zoom in for the rest
+        return response
+
+    @action(detail=False, methods=["get"])
+    def nearest(self, request):
+        """GET /api/transit/bus-stops/nearest/?lat=53.34&lng=-6.26&distance=500&limit=5  (distance in metres)"""
+        errors, params = {}, request.query_params
+        lat = read_number(params, "lat", errors, minimum=-90, maximum=90)
+        lng = read_number(params, "lng", errors, minimum=-180, maximum=180)
+        distance = read_number(params, "distance", errors, default=500, positive=True, maximum=MAX_STOP_RADIUS_M)
+        limit = read_number(params, "limit", errors, default=5, integer=True, minimum=1, maximum=20)
+        raise_if_invalid(errors)
+
+        origin = Point(lng, lat, srid=4326)
+        stops = (
+            self.get_queryset()
+            .filter(location__distance_lte=(origin, D(m=distance)))   # uses the spatial index
+            .annotate(distance=Distance("location", origin))
+            .order_by("distance")[:limit]
+        )
+        return Response(self.get_serializer(stops, many=True).data)

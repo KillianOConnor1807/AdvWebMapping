@@ -1,11 +1,13 @@
 # api/serializers.py
 from django.contrib.gis.measure import D
+import re
+
 from rest_framework import serializers
 from rest_framework_gis.serializers import GeoFeatureModelSerializer
 
 from districts.models import District
 from gyms.models import Gym
-from transit.models import TransitLine, TransitStop
+from transit.models import BusRoute, BusStop, TransitLine, TransitStop
 
 # Rough bounding box around Dublin (lng/lat); rejects obviously wrong coordinates
 DUBLIN_BOUNDS = {"west": -6.55, "south": 53.10, "east": -6.00, "north": 53.50}
@@ -89,3 +91,46 @@ class DistrictSerializer(GeoFeatureModelSerializer):
         model = District
         geo_field = "boundary"
         fields = ["id", "code", "name", "osm_id", "gym_count"]
+
+
+def route_sort_key(name):
+    """Sort bus numbers the way people read them: 7, 14, 46A, 145 (not 14, 145, 46A, 7)."""
+    match = re.match(r"(\d+)(.*)", name)
+    return (int(match.group(1)), match.group(2)) if match else (10**6, name)
+
+
+class BusRouteListSerializer(serializers.ModelSerializer):
+    """Light version for lists and dropdowns: no geometry, so all 116 routes are only a few KB."""
+    stop_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = BusRoute
+        fields = ["id", "route_id", "short_name", "long_name", "stop_count"]
+
+
+class BusRouteSerializer(GeoFeatureModelSerializer):
+    """One route as GeoJSON, including its drawn path."""
+    stop_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = BusRoute
+        geo_field = "route"
+        fields = ["id", "route_id", "short_name", "long_name", "stop_count"]
+
+
+class BusStopSerializer(GeoFeatureModelSerializer):
+    routes = serializers.SerializerMethodField()
+    distance_m = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BusStop
+        geo_field = "location"
+        fields = ["id", "stop_id", "code", "name", "routes", "distance_m"]
+
+    def get_routes(self, obj):
+        # Uses the prefetched routes, so listing many stops does not query once per stop
+        return sorted({r.short_name for r in obj.routes.all()}, key=route_sort_key)
+
+    def get_distance_m(self, obj):
+        dist = getattr(obj, "distance", None)
+        return round(dist.m) if dist is not None else None

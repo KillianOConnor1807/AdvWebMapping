@@ -19,6 +19,7 @@
     .map-legend .sw { flex: 0 0 22px; display: inline-flex; justify-content: center; align-items: center; }
     .sw-line { width: 22px; height: 5px; border-radius: 2px; }
     .sw-stop { width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #94A3B8; }
+    .sw-bus { width: 9px; height: 9px; border-radius: 50%; background: #38bdf8; border: 2px solid #0369a1; }
     .sw-origin { width: 12px; height: 12px; border-radius: 50%; background: #dc3545; }
     .sw-radius { width: 18px; height: 18px; border-radius: 50%; border: 1px solid #F59E0B; background: rgba(245,158,11,.15); }
     .sw-district { width: 18px; height: 13px; border: 1px solid #1a3a6b; background: rgba(78,121,167,.25); }
@@ -255,8 +256,11 @@
     const stopLayer = L.layerGroup().addTo(map);
     const districtLayer = L.layerGroup();               // off by default; toggle in the layer control
     const districtHighlight = L.layerGroup().addTo(map);
+    const busStopLayer = L.layerGroup().addTo(map);     // filled from the API only when zoomed in
+    const connectionLayer = L.layerGroup().addTo(map);  // the 'get there by transit' route
     L.control.layers(null, {
-        'Gyms': gymLayer, 'Transit lines': transitLayer, 'Transit stops': stopLayer, 'Districts': districtLayer
+        'Gyms': gymLayer, 'Transit lines': transitLayer, 'Luas / DART stops': stopLayer,
+        'Bus stops (zoom in)': busStopLayer, 'Districts': districtLayer
     }).addTo(map);
 
     // Legend: open on wider screens, collapsed to a button on phones so it doesn't cover the map
@@ -271,7 +275,8 @@
             '<ul id="legend-items"' + (open ? '' : ' hidden') + '>' +
                 '<li><span class="sw">' + PIN_SVG + '</span>Gym</li>' +
                 '<li id="legend-lines-anchor" hidden></li>' +
-                '<li><span class="sw"><span class="sw-stop"></span></span>Transit stop</li>' +
+                '<li><span class="sw"><span class="sw-stop"></span></span>Luas / DART stop</li>' +
+                '<li><span class="sw"><span class="sw-bus"></span></span>Bus stop (zoom in)</li>' +
                 '<li><span class="sw"><span class="sw-origin"></span></span>Your chosen location</li>' +
                 '<li><span class="sw"><span class="sw-radius"></span></span>Search radius</li>' +
                 '<li id="legend-district" hidden><span class="sw"><span class="sw-district"></span></span>District</li>' +
@@ -407,6 +412,7 @@
         if (distances.has(id)) html += '<br>' + fmtDistance(distances.get(id)) + ' away';
         if (p.address) html += '<br>' + esc(p.address);
         if (p.website) html += '<br><a href="' + esc(p.website) + '" target="_blank" rel="noopener noreferrer">Website</a>';
+        html += '<div class="mt-2"><button type="button" class="btn btn-sm btn-primary" data-gym-action="route" data-id="' + id + '">Get there by transit</button></div>';
         if (CAN_MANAGE && p.can_edit) {     // the API decides who may edit (owner or staff)
             html += '<div class="mt-2 d-flex gap-2">' +
                 '<button type="button" class="btn btn-sm btn-outline-primary" data-gym-action="edit" data-id="' + id + '">Edit</button>' +
@@ -513,6 +519,7 @@
         if (originMarker) map.removeLayer(originMarker);
         if (radiusCircle) map.removeLayer(radiusCircle);
         originMarker = radiusCircle = origin = null;
+        connectionLayer.clearLayers();
         highlightLine(null);
         distances.clear();
         resultsEl.innerHTML = '';
@@ -642,6 +649,7 @@
 
     async function findNearby(lat, lng) {
         highlightLine(null);
+        connectionLayer.clearLayers();
         origin = { lat, lng };
         const km = radiusInput.value;
 
@@ -667,6 +675,145 @@
             setStatus(err.message, true);
         }
     }
+
+    // ----- Getting to a gym by public transport -----
+    let connectionRequest = 0;   // lets a newer click cancel an older, slower one
+
+    function describe(option) {
+        const mode = { bus: 'Bus', luas: 'Luas', dart: 'DART' }[option.mode] || option.mode;
+        return mode + ' ' + option.route + ': walk ' + fmtDistance(option.board.walk_m) + ' to ' + option.board.name +
+            (option.board.code ? ' (stop ' + option.board.code + ')' : '') + ', ride to ' + option.alight.name +
+            ', then walk ' + fmtDistance(option.alight.walk_m) + '.';
+    }
+
+    // Draw one option: dashed walking legs, the boarding and alighting stops, and the route itself
+    async function drawOption(data, option) {
+        const request = ++connectionRequest;
+        connectionLayer.clearLayers();
+        const from = [data.origin.lat, data.origin.lng], to = [data.gym.lat, data.gym.lng];
+        const board = [option.board.lat, option.board.lng], alight = [option.alight.lat, option.alight.lng];
+        const walk = { color: '#F59E0B', weight: 4, dashArray: '6 8', opacity: 0.95 };
+        const stopStyle = { radius: 8, color: '#0d6efd', weight: 3, fillColor: '#fff', fillOpacity: 1 };
+
+        L.polyline([from, board], walk).addTo(connectionLayer);
+        L.polyline([alight, to], walk).addTo(connectionLayer);
+        L.circleMarker(board, stopStyle).bindTooltip('Board: ' + option.board.name).addTo(connectionLayer);
+        L.circleMarker(alight, stopStyle).bindTooltip('Get off: ' + option.alight.name).addTo(connectionLayer);
+        map.fitBounds(L.latLngBounds([from, to, board, alight]).pad(0.25));
+
+        if (option.route_pk) {
+            try {
+                const route = await readJson(await fetch('/api/transit/bus-routes/' + option.route_pk + '/'));
+                if (request === connectionRequest) {
+                    L.geoJSON(route, { style: { color: '#0d6efd', weight: 5, opacity: 0.75 }, interactive: false })
+                        .addTo(connectionLayer).bringToBack();
+                }
+            } catch (err) { /* the stops and walking legs are still shown */ }
+        } else {
+            L.polyline([board, alight], { color: option.colour || '#0d6efd', weight: 6, opacity: 0.8 }).addTo(connectionLayer);
+        }
+    }
+
+    function addNote(text) {
+        const li = document.createElement('li');
+        li.className = 'list-group-item small text-muted';
+        li.textContent = text;
+        resultsEl.appendChild(li);
+    }
+
+    async function showConnection(id) {
+        const gym = gymFeatures.get(id);
+        if (!origin) {
+            setStatus('Set your location first: click the map or press "Use my location", then try again.', true);
+            setResultsTitle('Get there by public transport');
+            revealResults();
+            return;
+        }
+        setResultsTitle('Getting to ' + (gym ? gym.properties.name : 'the gym'));
+        setStatus('Finding the best stops...');
+        revealResults();
+        try {
+            const params = new URLSearchParams({ lat: origin.lat, lng: origin.lng, max_walk: 800 });
+            const data = await readJson(await fetch('/api/gyms/' + id + '/connection/?' + params.toString()));
+
+            distances.clear();
+            resultsEl.innerHTML = '';
+            setResultsTitle('Getting to ' + data.gym.name);
+            setStatus('Walking straight there is about ' + fmtDistance(data.straight_line_m) + ' (' + data.walk_only_min +
+                ' min). Walking distances are straight-line estimates.');
+
+            data.options.forEach((option, index) => {
+                const li = document.createElement('li');
+                li.className = 'list-group-item';
+                const head = document.createElement('div');
+                head.className = 'd-flex justify-content-between align-items-center gap-2';
+                const badge = document.createElement('span');
+                badge.className = 'badge ' + (option.colour ? '' : 'text-bg-primary');
+                if (option.colour) badge.style.background = option.colour;
+                badge.textContent = option.route;
+                const show = document.createElement('button');
+                show.type = 'button';
+                show.className = 'btn btn-sm btn-outline-secondary';
+                show.textContent = 'Show on map';
+                show.addEventListener('click', () => drawOption(data, option));
+                head.append(badge, show);
+                const steps = document.createElement('div');
+                steps.className = 'small mt-1';
+                steps.textContent = describe(option);
+                li.append(head, steps);
+                resultsEl.appendChild(li);
+                if (index === 0) drawOption(data, option);       // show the least-walking option straight away
+            });
+
+            if (!data.options.length) {
+                connectionLayer.clearLayers();
+                addNote('No single bus, Luas or DART route connects stops within ' + fmtDistance(data.max_walk_m) +
+                    ' of both you and this gym. Nearest stops are listed below.');
+                data.nearest_stops_to_you.forEach(s => addNote('Near you: ' + s.name + (s.code ? ' (' + s.code + ')' : '') + ', ' + fmtDistance(s.walk_m)));
+                data.nearest_stops_to_gym.forEach(s => addNote('Near the gym: ' + s.name + (s.code ? ' (' + s.code + ')' : '') + ', ' + fmtDistance(s.walk_m)));
+            }
+
+            const link = document.createElement('li');
+            link.className = 'list-group-item';
+            const a = document.createElement('a');
+            a.href = data.directions_url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = 'Walking directions (OpenStreetMap)';
+            link.appendChild(a);
+            resultsEl.appendChild(link);
+            updateResultsCard();
+            revealResults();
+        } catch (err) {
+            setStatus(err.message, true);
+        }
+    }
+
+    // Bus stops: ~4,300 of them, so ask only for the ones in view, and only when zoomed in
+    const BUS_STOP_MIN_ZOOM = 15;
+    let busStopTimer;
+
+    async function loadBusStops() {
+        if (!map.hasLayer(busStopLayer)) return;
+        if (map.getZoom() < BUS_STOP_MIN_ZOOM) { busStopLayer.clearLayers(); return; }
+        const b = map.getBounds();
+        const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(',');
+        try {
+            const data = await readJson(await fetch('/api/transit/bus-stops/?bbox=' + bbox));
+            busStopLayer.clearLayers();
+            data.features.forEach(f => {
+                const [lng, lat] = f.geometry.coordinates;
+                const p = f.properties;
+                L.circleMarker([lat, lng], { radius: 6, color: '#0369a1', weight: 2, fillColor: '#38bdf8', fillOpacity: 0.9 })
+                    .bindPopup('<strong>' + esc(p.name) + '</strong>' + (p.code ? ' (stop ' + esc(p.code) + ')' : '') +
+                        '<br>Routes: ' + (p.routes.length ? esc(p.routes.join(', ')) : 'none listed'))
+                    .addTo(busStopLayer);
+            });
+        } catch (err) {
+            console.warn('Bus stops not loaded:', err.message);     // not worth interrupting the user for
+        }
+    }
+    map.on('moveend overlayadd', () => { clearTimeout(busStopTimer); busStopTimer = setTimeout(loadBusStops, 250); });
 
     // ----- Adding, editing and deleting gyms (only wired up when logged in) -----
     const editIcon = new L.Icon.Default({ className: 'edit-pin' });
@@ -852,6 +999,12 @@
         }
     }
 
+    map.on('popupopen', e => {
+        e.popup.getElement().querySelectorAll('[data-gym-action="route"]').forEach(btn => {
+            btn.addEventListener('click', () => { map.closePopup(); showConnection(Number(btn.dataset.id)); });
+        });
+    });
+
     if (CAN_MANAGE) {
         document.getElementById('add-btn').addEventListener('click', () => {
             if (editPin) closeEditor();
@@ -862,7 +1015,7 @@
 
         // Edit / Delete buttons live inside popups, which Leaflet creates on demand
         map.on('popupopen', e => {
-            e.popup.getElement().querySelectorAll('[data-gym-action]').forEach(btn => {
+            e.popup.getElement().querySelectorAll('[data-gym-action="edit"], [data-gym-action="delete"]').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const id = Number(btn.dataset.id);
                     map.closePopup();
