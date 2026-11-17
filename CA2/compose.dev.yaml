@@ -1,0 +1,10 @@
+# Development overrides, layered on top of compose.yaml:
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+services:
+  web:
+    # Django's dev server reloads on code changes; the bind mount makes edits visible instantly
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    environment:
+      DEBUG: "True"
