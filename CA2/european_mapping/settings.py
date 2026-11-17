@@ -169,5 +169,12 @@ REST_FRAMEWORK = {
     },
 }
 
+# Live bus times from the National Transport Authority (optional). With no key the app shows
+# scheduled times only. Put the key in .env (never in Git): NTA_API_KEY=...
+NTA_API_KEY = os.environ.get("NTA_API_KEY", "")
+NTA_API_KEY_HEADER = os.environ.get("NTA_API_KEY_HEADER", "x-api-key")
+NTA_GTFSR_URL = os.environ.get("NTA_GTFSR_URL", "https://api.nationaltransport.ie/gtfsr/v2/TripUpdates")
+REALTIME_CACHE_SECONDS = int(os.environ.get("REALTIME_CACHE_SECONDS", "30"))   # share one download between users
+
 # CORS is only opened up in development
 CORS_ALLOW_ALL_ORIGINS = DEBUG

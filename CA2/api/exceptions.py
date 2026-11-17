@@ -33,6 +33,7 @@ STATUS_CODES = {
     406: "not_acceptable",
     415: "unsupported_media_type",
     429: "throttled",
+    503: "service_unavailable",
 }
 MAX_SUMMARY_FIELDS = 3
 

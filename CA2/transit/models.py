@@ -67,3 +67,41 @@ class BusStop(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.code})" if self.code else self.name
+
+
+class BusService(models.Model):
+    """A GTFS 'service': a set of days a group of trips runs, e.g. 'Monday to Friday until February'."""
+    service_id = models.CharField(max_length=40, unique=True)
+    weekdays = models.CharField(max_length=7, help_text="Seven 0/1 flags, Monday first: runs on that day of the week?")
+    start_date = models.DateField()
+    end_date = models.DateField()
+
+    def __str__(self):
+        return f"Service {self.service_id} ({self.start_date} to {self.end_date})"
+
+
+class BusServiceException(models.Model):
+    """A one-off change to a service, such as 'does not run on 25 December'."""
+    service = models.ForeignKey(BusService, on_delete=models.CASCADE, related_name="exceptions")
+    date = models.DateField(db_index=True)
+    added = models.BooleanField(help_text="True: runs on this date although its weekly pattern says no. False: does not run.")
+
+
+class BusTimetable(models.Model):
+    """Every departure from one stop on one route.
+
+    `variants` holds lists of departure times (minutes after midnight, stored as the first time then
+    the gaps between times; 1510 means 01:10 the next morning). `by_service` says which list applies
+    for each service, so the same times are not stored twice.
+    """
+    stop = models.ForeignKey(BusStop, on_delete=models.CASCADE, related_name="timetables")
+    route = models.ForeignKey(BusRoute, on_delete=models.CASCADE, related_name="timetables")
+    headsign = models.CharField(max_length=150, blank=True, help_text="Where the bus is heading")
+    variants = models.JSONField()
+    by_service = models.JSONField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["stop", "route"], name="one_timetable_per_stop_and_route")]
+
+    def __str__(self):
+        return f"{self.route.short_name} at {self.stop}"

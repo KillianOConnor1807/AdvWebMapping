@@ -43,7 +43,9 @@ class Gym(models.Model):
         verbose_name_plural = "gyms"
 
     def save(self, *args, **kwargs):
-        # Point-in-polygon lookup keeps the district in sync with the location
+        # DATABASE WRITE: runs on every insert or update of a gym, whether it comes from the admin,
+        # the API or a loader command, so `district` is always derived from `location` and
+        # never typed by hand. A point-in-polygon lookup keeps the district in sync with the location.
         found = District.containing(self.location) if self.location else None
         self.district = found.name if found else ""
         super().save(*args, **kwargs)

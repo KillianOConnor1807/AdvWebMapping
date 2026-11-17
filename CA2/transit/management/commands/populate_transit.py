@@ -176,6 +176,7 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args, clear=False, **options):
         if clear:
+            # DATABASE WRITE (delete): remove every Luas/DART line; their stops are deleted with them
             deleted, _ = TransitLine.objects.all().delete()
             self.stdout.write(f"Deleted {deleted} existing lines/stops")
 
@@ -185,11 +186,16 @@ class Command(BaseCommand):
                 [LineString([to_point(*stops[name]) for name in branch]) for branch in spec["branches"]],
                 srid=4326,
             )
+            # DATABASE WRITE (insert or update): one Luas or DART line, with its path stored as a
+            # MultiLineString (one LineString per branch). Matched on `name`, so re-running the command
+            # updates the line instead of creating a duplicate.
             line, _ = TransitLine.objects.update_or_create(
                 name=spec["name"],
                 defaults={"mode": spec["mode"], "colour": spec["colour"], "route": route},
             )
             for name, (lat, lng) in stops.items():
+                # DATABASE WRITE (insert or update): one stop per station, stored as a Point
+                # (SRID 4326). Matched on (line, name) so a station is never duplicated.
                 TransitStop.objects.update_or_create(
                     line=line, name=name, defaults={"location": to_point(lat, lng)},
                 )

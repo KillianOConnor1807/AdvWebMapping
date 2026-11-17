@@ -3,13 +3,14 @@ from django.core.management.base import BaseCommand
 
 from districts.models import District
 from gyms.models import Gym
-from transit.models import TransitLine
+from transit.models import BusRoute, TransitLine
 
 # Districts first so new gyms get their district straight away
 STEPS = [
     (District, "load_districts"),
     (Gym, "populate_gyms"),
     (TransitLine, "populate_transit"),
+    (BusRoute, "load_bus_seed"),    # bundled Dublin Bus data, no GTFS download needed
 ]
 
 
@@ -23,4 +24,6 @@ class Command(BaseCommand):
                 self.stdout.write(f"{label}: already loaded, skipping")
                 continue
             self.stdout.write(f"{label}: empty, running {command}")
+            # DATABASE WRITE: runs the loader command for this table. Only reached when the table is empty,
+            # so data that already exists (or was added through the website) is never overwritten.
             call_command(command, stdout=self.stdout, stderr=self.stderr)

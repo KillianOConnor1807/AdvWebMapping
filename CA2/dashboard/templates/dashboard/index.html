@@ -12,7 +12,7 @@
     /* Map legend (Leaflet control, bottom-left) */
     .map-legend { background: #fff; border-radius: .375rem; box-shadow: 0 1px 5px rgba(0,0,0,.4); font-size: .8rem; max-width: 220px; }
     .map-legend-toggle { background: none; border: 0; width: 100%; padding: .35rem .6rem; font-weight: 600; text-align: left; display: flex; justify-content: space-between; gap: .5rem; }
-    .map-legend-toggle:focus-visible { outline: 2px solid #F59E0B; outline-offset: -2px; }
+    .map-legend-toggle:focus-visible { outline: 2px solid #5BA4C4; outline-offset: -2px; }
     .map-legend-toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
     .map-legend ul { list-style: none; margin: 0; padding: 0 .6rem .45rem; }
     .map-legend li { display: flex; align-items: center; gap: .45rem; margin-top: .25rem; }
@@ -225,6 +225,20 @@
                     <button type="button" id="line-btn" class="btn btn-primary mt-2">Find gyms near line</button>
                 </div>
             </section>
+
+            <section class="card shadow-sm mb-3" aria-labelledby="bus-heading">
+                <div class="card-body">
+                    <h2 id="bus-heading" class="h5">Bus routes</h2>
+                    <p class="text-muted small">Type a route number or pick one to see its path and stops. Click a stop for the next buses.</p>
+                    <label for="bus-route-input" class="form-label">Route</label>
+                    <div class="input-group">
+                        <input id="bus-route-input" class="form-control" list="bus-route-list" placeholder="e.g. 46A"
+                               autocomplete="off" autocapitalize="characters" spellcheck="false">
+                        <button type="button" id="bus-route-clear" class="btn btn-outline-secondary">Clear</button>
+                    </div>
+                    <datalist id="bus-route-list"></datalist>
+                </div>
+            </section>
         </div>
 
         <!-- Map (first on small screens) -->
@@ -241,6 +255,7 @@
     const DUBLIN = [53.3498, -6.2603];
     const map = L.map('map').setView(DUBLIN, 11);
 
+    // MAP DISPLAY: the base map. OpenStreetMap tiles (images), drawn by Leaflet, with the required credit.
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         referrerPolicy: 'strict-origin-when-cross-origin',
@@ -251,6 +266,12 @@
     map.createPane('districts');
     map.getPane('districts').style.zIndex = 350;
 
+    // MAP DISPLAY: one Leaflet layer group per kind of data, so each can be cleared, redrawn or
+    // switched on and off in the layer control without touching the others.
+    //   gymLayer: gym pins | transitLayer: Luas/DART lines | stopLayer: Luas/DART stops
+    //   districtLayer: district polygons | districtHighlight: outline of the selected district
+    //   busStopLayer: bus stops | connectionLayer: the 'get there by transit' route
+    //   busRouteLayer: the bus route picked in the sidebar, with all of its stops
     const gymLayer = L.layerGroup().addTo(map);
     const transitLayer = L.layerGroup().addTo(map);
     const stopLayer = L.layerGroup().addTo(map);
@@ -258,6 +279,8 @@
     const districtHighlight = L.layerGroup().addTo(map);
     const busStopLayer = L.layerGroup().addTo(map);     // filled from the API only when zoomed in
     const connectionLayer = L.layerGroup().addTo(map);  // the 'get there by transit' route
+    const busRouteLayer = L.layerGroup().addTo(map);    // the bus route chosen in the Bus routes box
+    // MAP DISPLAY: the layer switcher (top right) that toggles the groups above
     L.control.layers(null, {
         'Gyms': gymLayer, 'Transit lines': transitLayer, 'Luas / DART stops': stopLayer,
         'Bus stops (zoom in)': busStopLayer, 'Districts': districtLayer
@@ -265,6 +288,7 @@
 
     // Legend: open on wider screens, collapsed to a button on phones so it doesn't cover the map
     const PIN_SVG = '<svg width="12" height="18" viewBox="0 0 12 18" aria-hidden="true"><path d="M6 0C2.7 0 0 2.6 0 5.9 0 10.3 6 18 6 18s6-7.7 6-12.1C12 2.6 9.3 0 6 0z" fill="#2a81cb"/><circle cx="6" cy="6" r="2.3" fill="#fff"/></svg>';
+    // MAP DISPLAY: the colour key (bottom left) for lines, stops and bus stops
     const legend = L.control({ position: 'bottomleft' });
     legend.onAdd = function () {
         const div = L.DomUtil.create('div', 'map-legend');
@@ -412,7 +436,7 @@
         if (distances.has(id)) html += '<br>' + fmtDistance(distances.get(id)) + ' away';
         if (p.address) html += '<br>' + esc(p.address);
         if (p.website) html += '<br><a href="' + esc(p.website) + '" target="_blank" rel="noopener noreferrer">Website</a>';
-        html += '<div class="mt-2"><button type="button" class="btn btn-sm btn-primary" data-gym-action="route" data-id="' + id + '">Get there by transit</button></div>';
+        html += '<div class="mt-2"><button type="button" class="btn btn-sm btn-primary" data-gym-action="directions" data-id="' + id + '">Directions</button></div>';
         if (CAN_MANAGE && p.can_edit) {     // the API decides who may edit (owner or staff)
             html += '<div class="mt-2 d-flex gap-2">' +
                 '<button type="button" class="btn btn-sm btn-outline-primary" data-gym-action="edit" data-id="' + id + '">Edit</button>' +
@@ -430,6 +454,7 @@
             const id = f.id ?? f.properties.id;
             gymFeatures.set(id, f);
             const [lng, lat] = f.geometry.coordinates;
+            // MAP DISPLAY: one pin per gym, from the /api/gyms/ GeoJSON Point; clicking opens its popup
             const marker = L.marker([lat, lng], { title: f.properties.name, alt: f.properties.name })
                 .bindPopup(() => popupHtml(id, f.properties));
             marker.addTo(gymLayer);
@@ -535,6 +560,7 @@
 
             lineData.features.forEach(f => {
                 const id = f.id ?? f.properties.id;
+                // MAP DISPLAY: each Luas/DART line, drawn as a coloured line from its MultiLineString; hover shows the name
                 const layer = L.geoJSON(f, { style: { color: f.properties.colour, weight: 5, opacity: 0.9 } })
                     .bindTooltip(esc(f.properties.name), { sticky: true })
                     .on('click', e => {
@@ -557,6 +583,7 @@
             const colours = new Map(lineData.features.map(f => [f.id ?? f.properties.id, f.properties.colour]));
             stopData.features.forEach(f => {
                 const [lng, lat] = f.geometry.coordinates;
+                // MAP DISPLAY: each Luas/DART stop as a small ring in its line's colour; hover shows name and line
                 L.circleMarker([lat, lng], {
                     radius: 4, color: colours.get(f.properties.line) || '#333', weight: 2,
                     fillColor: '#fff', fillOpacity: 1
@@ -589,6 +616,7 @@
                 opt.textContent = p.name + ' (' + p.gym_count + ')';
                 districtSelect.appendChild(opt);
 
+                // MAP DISPLAY: each Dublin district polygon, shaded darker when it has gyms; hover shows the gym count
                 L.geoJSON(f, {
                     pane: 'districts',
                     style: { color: '#1a3a6b', weight: 1, fillColor: '#4e79a7', fillOpacity: p.gym_count ? 0.18 : 0.05 }
@@ -614,6 +642,7 @@
         districtHighlight.clearLayers();
         const f = districts.get(code);
         if (f) {
+            // MAP DISPLAY: a thick amber outline around the selected district, then zoom the map to fit it
             const outline = L.geoJSON(f, {
                 pane: 'districts', interactive: false,
                 style: { color: '#F59E0B', weight: 3, fillOpacity: 0.12 }
@@ -655,6 +684,8 @@
 
         if (originMarker) map.removeLayer(originMarker);
         if (radiusCircle) map.removeLayer(radiusCircle);
+        // MAP DISPLAY: a red dot where the user clicked or located themselves, plus an amber circle
+        // showing the search radius (the area the 'gyms nearby' query covers)
         originMarker = L.circleMarker([lat, lng], { radius: 8, color: '#dc3545', fillOpacity: 0.9 })
             .addTo(map).bindTooltip('Your chosen location');
         radiusCircle = L.circle([lat, lng], { radius: km * 1000, color: '#F59E0B', weight: 2, fillOpacity: 0.08 }).addTo(map);
@@ -695,8 +726,27 @@
         const walk = { color: '#F59E0B', weight: 4, dashArray: '6 8', opacity: 0.95 };
         const stopStyle = { radius: 8, color: '#0d6efd', weight: 3, fillColor: '#fff', fillOpacity: 1 };
 
-        L.polyline([from, board], walk).addTo(connectionLayer);
-        L.polyline([alight, to], walk).addTo(connectionLayer);
+        // MAP DISPLAY: the transit connection. Dashed amber lines are the walks (you to the boarding
+        // stop, and the alighting stop to the gym); blue rings mark where to board and get off.
+        // The walks start as straight dashed lines, shown instantly. Then the real footpath routes
+        // (from /api/route/) replace them so they follow the streets; if routing fails the straight lines stay.
+        const walks = L.layerGroup().addTo(connectionLayer);
+        const legs = [[from, board], [alight, to]];
+        legs.forEach(leg => L.polyline(leg, walk).addTo(walks));
+        Promise.all(legs.map(async ([a, b]) => {
+            try {
+                const params = new URLSearchParams({ from_lat: a[0], from_lng: a[1], to_lat: b[0], to_lng: b[1], mode: 'foot' });
+                return (await readJson(await fetch('/api/route/?' + params.toString()))).geometry;
+            } catch (err) { return null; }
+        })).then(geometries => {
+            if (request !== connectionRequest) return;           // a newer click replaced this journey
+            walks.clearLayers();
+            geometries.forEach((geometry, i) => {
+                // MAP DISPLAY: each walking leg, drawn along the real streets and footpaths
+                if (geometry) L.geoJSON(geometry, { style: walk, interactive: false }).addTo(walks);
+                else L.polyline(legs[i], walk).addTo(walks);
+            });
+        });
         L.circleMarker(board, stopStyle).bindTooltip('Board: ' + option.board.name).addTo(connectionLayer);
         L.circleMarker(alight, stopStyle).bindTooltip('Get off: ' + option.alight.name).addTo(connectionLayer);
         map.fitBounds(L.latLngBounds([from, to, board, alight]).pad(0.25));
@@ -705,11 +755,13 @@
             try {
                 const route = await readJson(await fetch('/api/transit/bus-routes/' + option.route_pk + '/'));
                 if (request === connectionRequest) {
+                    // MAP DISPLAY: the bus route's own line (fetched from /api/transit/bus-routes/<id>/), drawn under the stops
                     L.geoJSON(route, { style: { color: '#0d6efd', weight: 5, opacity: 0.75 }, interactive: false })
                         .addTo(connectionLayer).bringToBack();
                 }
             } catch (err) { /* the stops and walking legs are still shown */ }
         } else {
+            // MAP DISPLAY: for Luas/DART (no stored route line per trip) a straight line between the two stops
             L.polyline([board, alight], { color: option.colour || '#0d6efd', weight: 6, opacity: 0.8 }).addTo(connectionLayer);
         }
     }
@@ -733,14 +785,15 @@
         setStatus('Finding the best stops...');
         revealResults();
         try {
-            const params = new URLSearchParams({ lat: origin.lat, lng: origin.lng, max_walk: 800 });
+            // FINDING THE ROUTE (public transport): ask the server for bus/Luas/DART options from the
+            // user's position to this gym, allowing up to 2 km of walking to each stop (see api/connections.py)
+            const params = new URLSearchParams({ lat: origin.lat, lng: origin.lng, max_walk: 2000 });
             const data = await readJson(await fetch('/api/gyms/' + id + '/connection/?' + params.toString()));
 
             distances.clear();
             resultsEl.innerHTML = '';
             setResultsTitle('Getting to ' + data.gym.name);
-            setStatus('Walking straight there is about ' + fmtDistance(data.straight_line_m) + ' (' + data.walk_only_min +
-                ' min). Walking distances are straight-line estimates.');
+            setStatus('');
 
             data.options.forEach((option, index) => {
                 const li = document.createElement('li');
@@ -750,7 +803,8 @@
                 const badge = document.createElement('span');
                 badge.className = 'badge ' + (option.colour ? '' : 'text-bg-primary');
                 if (option.colour) badge.style.background = option.colour;
-                badge.textContent = option.route;
+                badge.textContent = option.route + (option.next_departure ? ' (' + waitText(option.next_departure) + ')' : '');
+                if (option.next_departure) badge.title = (option.next_departure.live ? 'Live: ' : 'Scheduled: ') + option.next_departure.time;
                 const show = document.createElement('button');
                 show.type = 'button';
                 show.className = 'btn btn-sm btn-outline-secondary';
@@ -789,6 +843,167 @@
         }
     }
 
+    // ----- Directions: the road route from the user's position to a gym -----
+    const MODES = { foot: 'Walk', bike: 'Cycle', car: 'Drive' };
+
+    async function showDirections(id, mode = 'foot') {
+        const gym = gymFeatures.get(id);
+        const name = gym ? gym.properties.name : 'the gym';
+        setResultsTitle('Directions to ' + name);
+        revealResults();
+        if (!origin) {
+            setStatus('Set your location first: click the map or press "Use my location", then press Directions again.', true);
+            return;
+        }
+        const request = ++connectionRequest;
+        setStatus('Finding the route...');
+        try {
+            // FINDING THE ROUTE (road): ask the server for the walking, cycling or driving route to this
+            // gym (see api/directions.py)
+            const params = new URLSearchParams({ lat: origin.lat, lng: origin.lng, mode });
+            const data = await readJson(await fetch('/api/gyms/' + id + '/directions/?' + params.toString()));
+            if (request !== connectionRequest) return;           // a newer click replaced this one
+
+            // MAP DISPLAY: the road route to the gym (GeoJSON LineString from the routing service),
+            // drawn as a white outline under a blue line so it stands out on any map colour
+            connectionLayer.clearLayers();
+            L.geoJSON(data.geometry, { style: { color: '#fff', weight: 9, opacity: 0.9 }, interactive: false }).addTo(connectionLayer);
+            const line = L.geoJSON(data.geometry, { style: { color: '#0d6efd', weight: 5, opacity: 0.95 }, interactive: false }).addTo(connectionLayer);
+            map.fitBounds(line.getBounds().pad(0.2));
+
+            distances.clear();
+            resultsEl.innerHTML = '';
+            setStatus(MODES[mode] + ': ' + fmtDistance(data.distance_m) + ', about ' + data.duration_min + ' min.');
+
+            const modes = document.createElement('li');
+            modes.className = 'list-group-item d-flex gap-2 flex-wrap';
+            Object.entries(MODES).forEach(([key, label]) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'btn btn-sm ' + (key === mode ? 'btn-primary' : 'btn-outline-primary');
+                b.textContent = label;
+                b.addEventListener('click', () => showDirections(id, key));
+                modes.appendChild(b);
+            });
+            const transit = document.createElement('button');
+            transit.type = 'button';
+            transit.className = 'btn btn-sm btn-outline-secondary';
+            transit.textContent = 'Public transport';
+            transit.addEventListener('click', () => showConnection(id));
+            modes.appendChild(transit);
+            resultsEl.appendChild(modes);
+            updateResultsCard();
+            revealResults();
+        } catch (err) {
+            setStatus(err.message, true);
+        }
+    }
+
+    // ----- Bus times: "12 minutes", and the popup on a bus stop -----
+    function waitText(d) {
+        if (d.minutes <= 0) return 'due';
+        if (d.minutes < 120) return d.minutes + (d.minutes === 1 ? ' minute' : ' minutes');
+        return 'at ' + d.time + (d.next_day ? ' tomorrow' : '');
+    }
+
+    // FINDING THE NEXT BUSES: ask the server for the next departures at this stop (scheduled, or
+    // live where the NTA feed is on) when its popup opens (see transit/departures.py)
+    async function fillDepartures(popup, id) {
+        const box = popup.getElement() && popup.getElement().querySelector('.bus-times');
+        if (!box) return;
+        try {
+            const data = await readJson(await fetch('/api/transit/bus-stops/' + id + '/departures/?limit=6'));
+            box.textContent = '';
+            if (!data.departures.length) {
+                box.textContent = 'No buses scheduled soon.';
+            } else {
+                data.departures.forEach(d => {
+                    const row = document.createElement('div');
+                    const route = document.createElement('strong');
+                    route.textContent = d.route;
+                    row.append(route, ' ' + (d.headsign ? d.headsign + ' ' : '') + '(' + waitText(d) + ')' + (d.live ? ' live' : ''));
+                    box.appendChild(row);
+                });
+                const note = document.createElement('div');
+                note.className = 'text-muted';
+                note.textContent = data.live_enabled ? 'Live times where available.' : 'Scheduled times.';
+                box.appendChild(note);
+            }
+            popup.update();
+        } catch (err) {
+            box.textContent = 'Times are not available right now.';
+        }
+    }
+
+    function bindBusStop(marker, feature) {
+        const p = feature.properties, id = feature.id ?? p.id;
+        marker.bindPopup('<strong>' + esc(p.name) + '</strong>' + (p.code ? ' (stop ' + esc(p.code) + ')' : '') +
+            '<br>Routes: ' + (p.routes.length ? esc(p.routes.join(', ')) : 'none listed') +
+            '<div class="bus-times small mt-2" aria-live="polite">Loading times...</div>');
+        marker.on('popupopen', e => fillDepartures(e.popup, id));
+    }
+
+    // ----- Bus route picker -----
+    const busRouteInput = document.getElementById('bus-route-input');
+    const busRoutes = new Map();      // "46A" -> {id, short_name, long_name, stop_count}
+    let busRouteRequest = 0;
+
+    async function loadBusRouteList() {
+        try {
+            const routes = await readJson(await fetch('/api/transit/bus-routes/'));
+            routes.sort((a, b) => a.short_name.localeCompare(b.short_name, undefined, { numeric: true }));
+            const list = document.getElementById('bus-route-list');
+            routes.forEach(r => {
+                busRoutes.set(r.short_name.toUpperCase(), r);
+                const option = document.createElement('option');
+                option.value = r.short_name;
+                option.label = r.long_name;
+                list.appendChild(option);
+            });
+        } catch (err) { /* the picker just stays empty; the rest of the app still works */ }
+    }
+
+    function clearBusRoute() {
+        busRouteRequest++;
+        busRouteLayer.clearLayers();
+        busRouteInput.value = '';
+    }
+
+    async function showBusRoute(route) {
+        const request = ++busRouteRequest;
+        setStatus('Loading route ' + route.short_name + '...');
+        try {
+            const [detail, stops] = await Promise.all([
+                readJson(await fetch('/api/transit/bus-routes/' + route.id + '/')),
+                readJson(await fetch('/api/transit/bus-routes/' + route.id + '/stops/')),
+            ]);
+            if (request !== busRouteRequest) return;               // the user picked something else meanwhile
+            busRouteLayer.clearLayers();
+            // MAP DISPLAY: the chosen bus route, one line per direction (its MultiLineString from the database)
+            const line = L.geoJSON(detail, { style: { color: '#0369a1', weight: 5, opacity: 0.85 }, interactive: false })
+                .addTo(busRouteLayer);
+            // MAP DISPLAY: every stop on that route as a blue dot, with the same next-buses popup as other bus stops
+            stops.features.forEach(f => {
+                const [lng, lat] = f.geometry.coordinates;
+                const marker = L.circleMarker([lat, lng], { radius: 5, color: '#0369a1', weight: 2, fillColor: '#38bdf8', fillOpacity: 0.95 })
+                    .addTo(busRouteLayer);
+                bindBusStop(marker, f);
+            });
+            map.fitBounds(line.getBounds().pad(0.1));
+            setStatus('Route ' + route.short_name + ' (' + route.long_name + '): ' + stops.features.length + ' stops.');
+        } catch (err) {
+            setStatus(err.message, true);
+        }
+    }
+
+    busRouteInput.addEventListener('change', () => {
+        const route = busRoutes.get(busRouteInput.value.trim().toUpperCase());
+        if (route) { busRouteInput.value = route.short_name; showBusRoute(route); }
+        else if (busRouteInput.value.trim()) setStatus('No bus route "' + busRouteInput.value.trim() + '". Try a number like 46A.', true);
+    });
+    document.getElementById('bus-route-clear').addEventListener('click', () => { clearBusRoute(); setStatus(''); });
+    loadBusRouteList();
+
     // Bus stops: ~4,300 of them, so ask only for the ones in view, and only when zoomed in
     const BUS_STOP_MIN_ZOOM = 15;
     let busStopTimer;
@@ -804,16 +1019,30 @@
             data.features.forEach(f => {
                 const [lng, lat] = f.geometry.coordinates;
                 const p = f.properties;
-                L.circleMarker([lat, lng], { radius: 6, color: '#0369a1', weight: 2, fillColor: '#38bdf8', fillOpacity: 0.9 })
-                    .bindPopup('<strong>' + esc(p.name) + '</strong>' + (p.code ? ' (stop ' + esc(p.code) + ')' : '') +
-                        '<br>Routes: ' + (p.routes.length ? esc(p.routes.join(', ')) : 'none listed'))
+                // MAP DISPLAY: each bus stop in view as a blue dot; clicking shows its name, code, routes and next buses
+                const marker = L.circleMarker([lat, lng], { radius: 6, color: '#0369a1', weight: 2, fillColor: '#38bdf8', fillOpacity: 0.9 })
                     .addTo(busStopLayer);
+                bindBusStop(marker, f);
             });
         } catch (err) {
             console.warn('Bus stops not loaded:', err.message);     // not worth interrupting the user for
         }
     }
     map.on('moveend overlayadd', () => { clearTimeout(busStopTimer); busStopTimer = setTimeout(loadBusStops, 250); });
+
+    // MAP DISPLAY: a small note (bottom right) telling people why no bus stops are showing when zoomed out
+    const zoomHint = L.control({ position: 'bottomright' });
+    zoomHint.onAdd = function () {
+        const div = L.DomUtil.create('div', 'map-hint');
+        div.textContent = 'Zoom in to see bus stops';
+        return div;
+    };
+    zoomHint.addTo(map);
+    function updateZoomHint() {
+        zoomHint.getContainer().hidden = !(map.hasLayer(busStopLayer) && map.getZoom() < BUS_STOP_MIN_ZOOM);
+    }
+    map.on('zoomend overlayadd overlayremove', updateZoomHint);
+    updateZoomHint();
 
     // ----- Adding, editing and deleting gyms (only wired up when logged in) -----
     const editIcon = new L.Icon.Default({ className: 'edit-pin' });
@@ -886,6 +1115,8 @@
         gymForm.elements.price_per_month.value = props.price_per_month ?? '';
         gymForm.elements.beginner_friendly.checked = props.beginner_friendly ?? true;
 
+        // MAP DISPLAY: the draggable pin used when adding or editing a gym; dragging it updates the
+        // latitude/longitude that will be saved to the database
         editPin = L.marker(latlng, { draggable: true, autoPan: true, icon: editIcon, keyboard: false })
             .bindTooltip(id ? 'Drag to move' : 'New gym: drag to adjust', { permanent: true, direction: 'top', offset: [0, -40] })
             .on('drag', updateLocationText)
@@ -1000,8 +1231,8 @@
     }
 
     map.on('popupopen', e => {
-        e.popup.getElement().querySelectorAll('[data-gym-action="route"]').forEach(btn => {
-            btn.addEventListener('click', () => { map.closePopup(); showConnection(Number(btn.dataset.id)); });
+        e.popup.getElement().querySelectorAll('[data-gym-action="directions"]').forEach(btn => {
+            btn.addEventListener('click', () => { map.closePopup(); showDirections(Number(btn.dataset.id)); });
         });
     });
 

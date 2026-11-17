@@ -89,11 +89,15 @@ class Command(BaseCommand):
 
     def handle(self, *args, clear=False, **options):
         if clear:
+            # DATABASE WRITE (delete): remove every gym, including any added through the website
             deleted, _ = Gym.objects.all().delete()
             self.stdout.write(f"Deleted {deleted} existing gyms")
 
         created = 0
         for gym in GYMS:
+            # DATABASE WRITE (insert or update): one gym per entry in GYMS, matched on `name` so
+            # re-running never duplicates. `location` is a Point (x = longitude, y = latitude);
+            # Gym.save() then fills in `district` automatically from that point.
             _, was_created = Gym.objects.update_or_create(
                 name=gym["name"],
                 defaults={

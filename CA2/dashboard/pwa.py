@@ -9,10 +9,10 @@ from django.templatetags.static import static
 from django.views.decorators.http import require_safe
 
 # Bump this to make every installed copy discard and re-download its cached app shell.
-PWA_VERSION = "1"
+PWA_VERSION = "6"
 
-THEME = "#0B1220"       # matches the navbar colour in static/css/theme.css
-BACKGROUND = "#0F172A"  # matches the page background
+THEME = "#06101F"       # matches the navbar colour in static/css/theme.css
+BACKGROUND = "#0A1628"  # matches the page background
 
 
 @require_safe

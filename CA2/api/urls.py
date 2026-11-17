@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    BusRouteViewSet, BusStopViewSet, DistrictViewSet, GymViewSet, TransitLineViewSet, TransitStopViewSet,
+    BusRouteViewSet, BusStopViewSet, DistrictViewSet, GymViewSet, TransitLineViewSet, TransitStopViewSet, route_view,
 )
 
 router = DefaultRouter()
@@ -14,5 +14,6 @@ router.register(r'transit/bus-stops', BusStopViewSet, basename='bus-stop')
 router.register(r'districts', DistrictViewSet, basename='district')
 
 urlpatterns = [
+    path('route/', route_view, name='route'),
     path('', include(router.urls)),
 ]

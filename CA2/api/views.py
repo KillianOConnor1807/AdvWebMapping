@@ -7,13 +7,16 @@ from django.contrib.gis.geos import Point, Polygon
 from django.contrib.gis.measure import D
 from django.db.models import Avg, Count, F, Func, IntegerField, OuterRef, Subquery
 from rest_framework import exceptions, permissions, viewsets
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 
 from districts.models import District
 from gyms.models import Gym
 from transit.models import BusRoute, BusStop, TransitLine, TransitStop
 from .connections import build_connection
+from .directions import PROFILES, build_directions, route_between
+from transit import realtime
+from transit.departures import departures_at_stop
 from .filters import GymFilter
 from .serializers import (
     BusRouteListSerializer, BusRouteSerializer, BusStopSerializer, DistrictSerializer,
@@ -118,7 +121,11 @@ class GymViewSet(viewsets.ModelViewSet):
     ordering_fields = ["name", "price_per_month"]
     pagination_class = None  # plain GeoJSON FeatureCollection
 
+    # Writes through the API: POST creates, PUT/PATCH updates and DELETE removes a gym (ModelViewSet).
+    # GymSerializer validates the data and IsOwnerOrReadOnly checks permission before anything is saved.
     def perform_create(self, serializer):
+        # DATABASE WRITE (insert): save the new gym with the logged-in user as its owner. The owner is set
+        # here, never taken from the request, so a client cannot create gyms owned by someone else.
         serializer.save(owner=self.request.user)
 
     @action(detail=False, methods=["get"])
@@ -178,7 +185,7 @@ class GymViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"])
     def connection(self, request, pk=None):
-        """GET /api/gyms/{id}/connection/?lat=53.34&lng=-6.26&max_walk=800
+        """GET /api/gyms/{id}/connection/?lat=53.34&lng=-6.26&max_walk=2000
 
         Public-transport options from the user's position to this gym: nearest stops at each end
         and the routes (bus, Luas, DART) that connect them. See api/connections.py.
@@ -186,9 +193,25 @@ class GymViewSet(viewsets.ModelViewSet):
         errors, params = {}, request.query_params
         lat = read_number(params, "lat", errors, minimum=-90, maximum=90)
         lng = read_number(params, "lng", errors, minimum=-180, maximum=180)
-        max_walk = read_number(params, "max_walk", errors, default=800, positive=True, maximum=MAX_STOP_RADIUS_M)
+        max_walk = read_number(params, "max_walk", errors, default=2000, positive=True, maximum=MAX_STOP_RADIUS_M)
         raise_if_invalid(errors)
         return Response(build_connection(Point(lng, lat, srid=4326), self.get_object(), max_walk))
+
+    @action(detail=True, methods=["get"])
+    def directions(self, request, pk=None):
+        """GET /api/gyms/{id}/directions/?lat=53.34&lng=-6.26&mode=foot  (mode: foot, bike or car)
+
+        The road route from the user's position to this gym, as a GeoJSON LineString plus distance
+        and time. See api/directions.py.
+        """
+        errors, params = {}, request.query_params
+        lat = read_number(params, "lat", errors, minimum=-90, maximum=90)
+        lng = read_number(params, "lng", errors, minimum=-180, maximum=180)
+        mode = params.get("mode", "foot")
+        if mode not in PROFILES:
+            errors["mode"] = "Must be one of: " + ", ".join(PROFILES) + "."
+        raise_if_invalid(errors)
+        return Response(build_directions(Point(lng, lat, srid=4326), self.get_object(), mode))
 
     @action(detail=True, methods=["get"])
     def district(self, request, pk=None):
@@ -276,6 +299,23 @@ class BusStopViewSet(viewsets.ReadOnlyModelViewSet):
             response["X-Truncated"] = "true"   # the client should zoom in for the rest
         return response
 
+    @action(detail=True, methods=["get"])
+    def departures(self, request, pk=None):
+        """GET /api/transit/bus-stops/{id}/departures/?limit=8
+
+        The next buses at this stop, soonest first: scheduled times from the GTFS timetable, replaced
+        by live times when the NTA feed is switched on. See transit/departures.py.
+        """
+        errors = {}
+        limit = read_number(request.query_params, "limit", errors, default=8, integer=True, minimum=1, maximum=20)
+        raise_if_invalid(errors)
+        stop = self.get_object()
+        return Response({
+            "stop": {"id": stop.pk, "name": stop.name, "code": stop.code},
+            "live_enabled": realtime.configured(),
+            "departures": departures_at_stop(stop, limit=limit),
+        })
+
     @action(detail=False, methods=["get"])
     def nearest(self, request):
         """GET /api/transit/bus-stops/nearest/?lat=53.34&lng=-6.26&distance=500&limit=5  (distance in metres)"""
@@ -294,3 +334,22 @@ class BusStopViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by("distance")[:limit]
         )
         return Response(self.get_serializer(stops, many=True).data)
+
+
+@api_view(["GET"])
+def route_view(request):
+    """GET /api/route/?from_lat=53.34&from_lng=-6.26&to_lat=53.29&to_lng=-6.15&mode=foot
+
+    The road or footpath route between any two points, as a GeoJSON LineString plus distance and
+    time. The map uses it to draw the walking parts of a public transport journey along real streets.
+    """
+    errors, params = {}, request.query_params
+    from_lat = read_number(params, "from_lat", errors, minimum=-90, maximum=90)
+    from_lng = read_number(params, "from_lng", errors, minimum=-180, maximum=180)
+    to_lat = read_number(params, "to_lat", errors, minimum=-90, maximum=90)
+    to_lng = read_number(params, "to_lng", errors, minimum=-180, maximum=180)
+    mode = params.get("mode", "foot")
+    if mode not in PROFILES:
+        errors["mode"] = "Must be one of: " + ", ".join(PROFILES) + "."
+    raise_if_invalid(errors)
+    return Response(route_between(Point(from_lng, from_lat, srid=4326), Point(to_lng, to_lat, srid=4326), mode))

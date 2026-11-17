@@ -14,11 +14,13 @@ from urllib.parse import urlencode
 from django.contrib.gis.db.models.functions import Distance
 from django.contrib.gis.measure import D
 
+from transit.departures import local_now, next_departure, service_days
 from transit.models import BusRoute, BusStop, TransitStop
 
 EARTH_RADIUS_M = 6371008.8
 WALK_M_PER_MIN = 80          # a relaxed walking pace, about 4.8 km/h
-STOPS_PER_END = 8            # nearest stops considered at each end
+STOPS_PER_END = 400          # most stops fetched within walking distance of each end
+STOPS_PER_ROUTE = 3          # for each route, its nearest few stops at each end (about one per direction)
 RAIL_WALK_M = 1500           # Luas and DART stops are further apart, so allow a longer walk
 ON_ROUTE_TOLERANCE = 0.0007  # degrees (~50 m): how close a stop must be to a route line to count as on it
 MAX_OPTIONS = 10
@@ -30,6 +32,8 @@ def travels_in_order(route_geometry, board, alight):
     A route is stored as one line per direction. A stop belongs to a direction if it lies within
     ON_ROUTE_TOLERANCE of that line, and the order is its fractional position along the line.
     """
+    # FINDING THE DIRECTION: project each stop onto the route line to get its position along it (0 at
+    # the start, 1 at the end). The bus goes board -> alight only if board comes first.
     for line in route_geometry:
         if line.distance(board) <= ON_ROUTE_TOLERANCE and line.distance(alight) <= ON_ROUTE_TOLERANCE:
             if line.project_normalized(board) < line.project_normalized(alight):
@@ -56,23 +60,30 @@ def _nearby_bus_stops(point, radius_m, limit):
 
 
 def bus_options(origin, gym_point, max_walk):
+    # FINDING THE BUS ROUTE, step 1: PostGIS finds every bus stop within `max_walk` metres of the
+    # user and of the gym (ST_DWithin on the stop GiST index), nearest first.
     near_origin = _nearby_bus_stops(origin, max_walk, STOPS_PER_END)
     near_gym = _nearby_bus_stops(gym_point, max_walk, STOPS_PER_END)
 
-    # route -> the nearby stops (at each end) that it serves
+    # route -> its nearest few stops at each end. Stops are closest-first, so the first ones kept are
+    # the nearest. This is per route, so busy areas full of other routes' stops cannot crowd it out.
     at_origin, at_gym = defaultdict(list), defaultdict(list)
-    for stop in near_origin:
-        for route in stop.routes.all():
-            at_origin[route.pk].append(stop)
-    for stop in near_gym:
-        for route in stop.routes.all():
-            at_gym[route.pk].append(stop)
+    for stops, found in ((near_origin, at_origin), (near_gym, at_gym)):
+        for stop in stops:
+            for route in stop.routes.all():
+                if len(found[route.pk]) < STOPS_PER_ROUTE:
+                    found[route.pk].append(stop)
 
+    # FINDING THE BUS ROUTE, step 2: a route can get us there only if it has a stop near the user
+    # AND a stop near the gym, so keep the routes that appear at both ends.
     shared = set(at_origin) & set(at_gym)
     geometry = {r.pk: r for r in BusRoute.objects.filter(pk__in=shared)}
     options = []
     for route_pk in shared:
         route = geometry[route_pk]
+        # FINDING THE BUS ROUTE, step 3: try each boarding/alighting stop pair on this route, drop
+        # pairs where the bus runs the wrong way (travels_in_order), and keep the pair with the
+        # least walking. That pair becomes this route's option.
         best = None
         for board in at_origin[route_pk]:
             for alight in at_gym[route_pk]:
@@ -93,6 +104,8 @@ def bus_options(origin, gym_point, max_walk):
 
 def rail_options(origin, gym_point):
     """Luas and DART: nearest stop on each line at each end; lines present at both ends are options."""
+    # FINDING THE LUAS/DART ROUTE: for each line, the nearest stop to the user and the nearest stop
+    # to the gym (within RAIL_WALK_M). A line with a stop at both ends is an option.
     def nearest_per_line(point):
         best = {}
         stops = (TransitStop.objects.filter(location__distance_lte=(point, D(m=RAIL_WALK_M)))
@@ -122,9 +135,21 @@ def directions_url(origin, gym_point):
 
 
 def build_connection(origin, gym, max_walk):
+    # FINDING THE ROUTE (public transport): collect the bus options and the Luas/DART options,
+    # then sort them so the one needing the least walking comes first. Only the best
+    # MAX_OPTIONS are returned.
     options, nearest_origin, nearest_gym = bus_options(origin, gym.location, max_walk)
     options += rail_options(origin, gym.location)
     options.sort(key=lambda o: o["total_walk_m"])
+    options = options[:MAX_OPTIONS]
+
+    # NEXT BUS: for each bus option, when does the next one leave the boarding stop? (scheduled, or
+    # live when the NTA feed is on). The calendar lookups are done once and shared by all options.
+    now = local_now()
+    days = service_days(now) if any(o["mode"] == "bus" for o in options) else None
+    for option in options:
+        if option["mode"] == "bus":
+            option["next_departure"] = next_departure(option["board"]["id"], option["route_pk"], now, days)
 
     straight = round(distance_m(origin, gym.location))
     return {
@@ -133,7 +158,7 @@ def build_connection(origin, gym, max_walk):
         "straight_line_m": straight,
         "walk_only_min": round(straight / WALK_M_PER_MIN),
         "max_walk_m": max_walk,
-        "options": options[:MAX_OPTIONS],
+        "options": options,
         "nearest_stops_to_you": [_stop_info(s, "bus") for s in nearest_origin],
         "nearest_stops_to_gym": [_stop_info(s, "bus") for s in nearest_gym],
         "directions_url": directions_url(origin, gym.location),

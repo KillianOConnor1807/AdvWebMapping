@@ -1,16 +1,19 @@
 /* Dark theme for the Dublin Muay Thai Gym Finder.
    Builds on Bootstrap 5.3's dark colour mode (data-bs-theme="dark" on <html>)
-   and recolours it: navy surfaces, light text and an amber accent. */
+   and recolours it: deep navy surfaces, light text and a soft steel-blue accent.
+   Change the --gf-* values below to re-colour the whole site. */
 
 :root[data-bs-theme="dark"] {
-    --gf-bg: #0F172A;            /* page background */
-    --gf-bar: #0B1220;           /* navbar and footer */
-    --gf-card: #1E293B;          /* cards, panels, map controls */
-    --gf-line: #334155;          /* borders */
-    --gf-text: #E2E8F0;          /* body text */
-    --gf-muted: #94A3B8;         /* secondary text */
-    --gf-accent: #F59E0B;        /* amber accent */
-    --gf-accent-hover: #FBBF24;
+    --gf-bg: #0A1628;            /* page background */
+    --gf-bar: #06101F;           /* navbar and footer */
+    --gf-card: #112240;          /* cards, panels, map controls */
+    --gf-line: #1F3B63;          /* borders */
+    --gf-text: #E6F1FF;          /* body text */
+    --gf-muted: #8FA5C6;         /* secondary text */
+    --gf-accent: #5BA4C4;        /* soft steel-blue accent */
+    --gf-accent-hover: #7DBBD6;
+    --gf-accent-active: #4A8DAB;
+    --gf-on-accent: #06101F;     /* text on top of the accent colour */
 
     --bs-body-bg: var(--gf-bg);
     --bs-body-color: var(--gf-text);
@@ -22,12 +25,12 @@
     --bs-tertiary-bg: var(--gf-card);
     --bs-border-color: var(--gf-line);
     --bs-link-color: var(--gf-accent);
-    --bs-link-color-rgb: 245, 158, 11;
+    --bs-link-color-rgb: 91, 164, 196;
     --bs-link-hover-color: var(--gf-accent-hover);
-    --bs-link-hover-color-rgb: 251, 191, 36;
+    --bs-link-hover-color-rgb: 125, 187, 214;
     --bs-primary: var(--gf-accent);
-    --bs-primary-rgb: 245, 158, 11;
-    --bs-focus-ring-color: rgba(245, 158, 11, 0.4);
+    --bs-primary-rgb: 91, 164, 196;
+    --bs-focus-ring-color: rgba(91, 164, 196, 0.4);
     color-scheme: dark;
 }
 
@@ -44,7 +47,7 @@ h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6, .navbar-brand {
 }
 .app-navbar .navbar-brand { font-weight: 700; color: #F8FAFC; }
 .app-navbar .brand-accent { color: var(--gf-accent); }
-.app-navbar .nav-link { color: #CBD5E1; }
+.app-navbar .nav-link { color: #C7D7EE; }
 .app-navbar .nav-link:hover,
 .app-navbar .nav-link:focus-visible { color: #F8FAFC; }
 .app-navbar .nav-link.active { color: var(--gf-accent); font-weight: 500; }
@@ -65,39 +68,39 @@ h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6, .navbar-brand {
 }
 .card.shadow-sm { box-shadow: none !important; }
 .table { --bs-table-bg: transparent; --bs-table-border-color: var(--gf-line); }
-.list-group { --bs-list-group-bg: #172033; --bs-list-group-border-color: var(--gf-line); }
+.list-group { --bs-list-group-bg: #0D1B33; --bs-list-group-border-color: var(--gf-line); }
 
 /* ---------- Buttons ---------- */
 .btn-primary {
     --bs-btn-bg: var(--gf-accent);
     --bs-btn-border-color: var(--gf-accent);
-    --bs-btn-color: #0F172A;
+    --bs-btn-color: var(--gf-on-accent);
     --bs-btn-hover-bg: var(--gf-accent-hover);
     --bs-btn-hover-border-color: var(--gf-accent-hover);
-    --bs-btn-hover-color: #0F172A;
-    --bs-btn-active-bg: #D97706;
-    --bs-btn-active-border-color: #D97706;
-    --bs-btn-active-color: #0F172A;
-    --bs-btn-focus-shadow-rgb: 245, 158, 11;
+    --bs-btn-hover-color: var(--gf-on-accent);
+    --bs-btn-active-bg: var(--gf-accent-active);
+    --bs-btn-active-border-color: var(--gf-accent-active);
+    --bs-btn-active-color: var(--gf-on-accent);
+    --bs-btn-focus-shadow-rgb: 91, 164, 196;
     font-weight: 500;
 }
 .btn-link { --bs-btn-color: var(--gf-accent); --bs-btn-hover-color: var(--gf-accent-hover); }
 .btn-outline-secondary {
-    --bs-btn-color: #CBD5E1;
-    --bs-btn-border-color: #475569;
+    --bs-btn-color: #C7D7EE;
+    --bs-btn-border-color: #2F5185;
     --bs-btn-hover-bg: var(--gf-line);
-    --bs-btn-hover-border-color: #64748B;
+    --bs-btn-hover-border-color: #4A73AD;
     --bs-btn-hover-color: #F8FAFC;
 }
 
 /* ---------- Forms ---------- */
-.form-control, .form-select { background-color: #0F172A; border-color: #475569; }
+.form-control, .form-select { background-color: #08111F; border-color: #2F5185; }
 .form-control:focus, .form-select:focus { border-color: var(--gf-accent); }
 .form-check-input:checked { background-color: var(--gf-accent); border-color: var(--gf-accent); }
 .form-range::-webkit-slider-thumb { background: var(--gf-accent); }
 .form-range::-moz-range-thumb { background: var(--gf-accent); }
-.form-range::-webkit-slider-runnable-track { background: #475569; }
-.form-range::-moz-range-track { background: #475569; }
+.form-range::-webkit-slider-runnable-track { background: #2F5185; }
+.form-range::-moz-range-track { background: #2F5185; }
 
 /* ---------- Leaflet map controls, popups and tooltips ---------- */
 .leaflet-bar a,
@@ -108,13 +111,13 @@ h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6, .navbar-brand {
     border-color: var(--gf-line) !important;
 }
 .leaflet-bar a:hover { background: var(--gf-line) !important; }
-.leaflet-bar a.leaflet-disabled { color: #64748B !important; }
+.leaflet-bar a.leaflet-disabled { color: #5C7399 !important; }
 .leaflet-control-layers-toggle { filter: invert(0.85); }
 .leaflet-control-layers-expanded label { color: var(--gf-text); }
 .map-legend-toggle { color: var(--gf-text); }
 .leaflet-control-attribution {
-    background: rgba(15, 23, 42, 0.85) !important;
-    color: #CBD5E1 !important;
+    background: rgba(10, 22, 40, 0.85) !important;
+    color: #C7D7EE !important;
 }
 .leaflet-control-attribution a { color: var(--gf-accent) !important; }
 .leaflet-popup-content-wrapper,
@@ -135,6 +138,13 @@ h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6, .navbar-brand {
 .leaflet-tooltip-left::before { border-left-color: var(--gf-card); }
 .leaflet-tooltip-right::before { border-right-color: var(--gf-card); }
 #map { border: 1px solid var(--gf-line); }
+.map-hint {
+    background: var(--gf-card); color: var(--gf-muted);
+    border: 1px solid var(--gf-line); border-radius: .375rem;
+    padding: .2rem .6rem; font-size: .8rem; margin-bottom: 1.4rem !important;
+}
+.map-hint[hidden] { display: none; }
+.bus-times { min-width: 11rem; }
 
 /* ---------- Analytics ---------- */
 .stat-tile .value { color: var(--gf-accent); font-family: "Space Grotesk", "Inter", sans-serif; }
@@ -143,7 +153,7 @@ h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6, .navbar-brand {
 
 /* ---------- PWA ---------- */
 .offline-banner { position: sticky; top: 0; z-index: 2000; padding: .35rem 1rem; text-align: center;
-                  background: var(--gf-accent); color: #0F172A; font-size: .85rem; font-weight: 600; }
+                  background: var(--gf-accent); color: var(--gf-on-accent); font-size: .85rem; font-weight: 600; }
 .offline-banner[hidden] { display: none; }
 
 /* ---------- Touch devices: comfortable tap targets (WCAG suggests at least 44px) ---------- */

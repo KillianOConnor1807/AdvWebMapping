@@ -24,6 +24,8 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args, file, clear=False, **options):
         if clear:
+            # DATABASE WRITE (delete): remove all district polygons (gyms keep their district name,
+            # which is stored as plain text on the gym, so no gyms are lost)
             deleted, _ = District.objects.all().delete()
             self.stdout.write(f"Deleted {deleted} existing districts")
 
@@ -54,6 +56,9 @@ class Command(BaseCommand):
                                    f"not {geom.geom_type}.")
             if geom.geom_type == "Polygon":
                 geom = MultiPolygon(geom, srid=4326)
+            # DATABASE WRITE (insert or update): one district polygon from the GeoJSON file, stored as a
+            # MultiPolygon (SRID 4326, GiST-indexed). Matched on the unique `code` (e.g. "D08"), so
+            # re-running updates the boundary instead of duplicating it.
             District.objects.update_or_create(
                 code=code,
                 defaults={"name": name, "osm_id": props.get("osm_id"),
@@ -61,7 +66,9 @@ class Command(BaseCommand):
             )
         self.stdout.write(f"Loaded {len(features)} districts")
 
-        # Gym.save() looks up the containing district, so re-saving refreshes every gym
+        # DATABASE WRITE (update): re-saving each gym runs Gym.save(), which stores the name of the
+        # district whose polygon contains the gym's point (a point-in-polygon query). Only the
+        # `district` column is written.
         unassigned = []
         for gym in Gym.objects.all():
             gym.save(update_fields=["district"])
